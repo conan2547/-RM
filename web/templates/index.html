@@ -119,12 +119,7 @@
         .camera-top-bar button { display: flex; align-items: center; gap: 6px; color: white; background: rgba(255,255,255,0.15); backdrop-filter: blur(8px); border: none; padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; }
         .camera-top-bar button svg { width: 18px; height: 18px; stroke: white; }
         .camera-top-title { font-size: 15px; font-weight: 700; }
-        .camera-indicators { display: flex; justify-content: center; gap: 12px; padding: 8px 20px; z-index: 2; }
-        .cam-indicator { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; backdrop-filter: blur(8px); }
-        .cam-indicator svg { width: 16px; height: 16px; }
-        .cam-indicator.neutral { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.7); }
-        .cam-indicator.good { background: rgba(5,150,105,0.25); color: #6ee7b7; }
-        .cam-indicator.bad { background: rgba(239,68,68,0.25); color: #fca5a5; }
+
         .camera-frame-area { flex: 1; display: flex; align-items: center; justify-content: center; z-index: 2; }
         .scan-frame { position: relative; width: 65vmin; height: 65vmin; max-width: 320px; max-height: 320px; }
         .scan-frame .corner { position: absolute; width: 28px; height: 28px; border-color: rgba(255,255,255,0.5); border-style: solid; border-width: 0; transition: border-color 0.3s; }
@@ -278,12 +273,12 @@
                         ตรวจสอบผิวหนังของคุณ<br>อย่างแม่นยำด้วย AI
                     </h1>
                     <p class="text-lg text-white/70 font-medium tracking-tight leading-relaxed mb-8 max-w-md">
-                        เพียงถ่ายภาพรอยโรค ระบบ AI จะช่วยคัดกรอง<br>โรคผิวหนัง 7 ชนิดได้ทันที
+                        เพียงถ่ายภาพรอยโรค ระบบ AI จะช่วยคัดกรอง<br>โรคผิวหนัง 5 ชนิดได้ทันที
                     </p>
                     <!-- Stats Row -->
                     <div class="flex flex-wrap gap-4 mb-8">
                         <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
-                            <div class="text-2xl font-extrabold text-white">7</div>
+                            <div class="text-2xl font-extrabold text-white">5</div>
                             <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">Conditions</div>
                         </div>
                         <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
@@ -1125,16 +1120,7 @@
                 สลับ
             </button>
         </div>
-        <div class="camera-indicators">
-            <div class="cam-indicator neutral" id="indLight">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-                <span>แสง</span>
-            </div>
-            <div class="cam-indicator neutral" id="indSkin">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                <span>ผิวหนัง</span>
-            </div>
-        </div>
+
         <div class="camera-frame-area">
             <div class="scan-frame" id="scanFrame">
                 <div class="corner tl"></div>
@@ -1251,24 +1237,10 @@
                 const resp = await fetch('/api/validate-frame', { method: 'POST', body: formData });
                 const data = await resp.json();
 
-                const indLight = document.getElementById('indLight');
-                const indSkin = document.getElementById('indSkin');
                 const scanFrame = document.getElementById('scanFrame');
                 const captureBtn = document.getElementById('captureBtn');
                 const scanLabel = document.getElementById('scanLabel');
                 const cameraHint = document.getElementById('cameraHint');
-                const checks = data.checks || {};
-
-                indLight.className = 'cam-indicator ' + (checks.sharp_ok ? 'good' : 'bad');
-                indLight.querySelector('span').textContent = checks.sharp_ok ? '✓ โฟกัส' : '✗ ไม่ชัด';
-
-                indSkin.className = 'cam-indicator ' + (data.valid ? 'good' : 'bad');
-                if (data.valid) { indSkin.querySelector('span').textContent = '✓ ผิวหนัง'; }
-                else if (!checks.skin_ok) { indSkin.querySelector('span').textContent = `✗ ผิวหนัง ${Math.round((checks.skin_ratio||0)*100)}%`; }
-                else if (!checks.uniform_ok || !checks.spread_ok) { indSkin.querySelector('span').textContent = '✗ เห็นใบหน้า'; }
-                else if (!checks.edge_ok) { indSkin.querySelector('span').textContent = '✗ ซูมอีก'; }
-                else if (!checks.dark_ok) { indSkin.querySelector('span').textContent = '✗ มีส่วนมืด'; }
-                else { indSkin.querySelector('span').textContent = '✗ ปรับตำแหน่ง'; }
 
                 scanFrame.className = 'scan-frame' + (data.valid ? ' detected' : '');
                 captureBtn.disabled = !data.valid;
