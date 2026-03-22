@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+.DS_Store
+models/
+data/
+training/
+IMG/
+model_seekwell_v2/
+.agent/
+.gemini/
