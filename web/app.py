@@ -144,7 +144,7 @@ CLASS_INFO = {
 # ─── Load ViT Model ────────────────────────────────────────
 print("=" * 65)
 print("  🧬 ViT Skin Cancer Scanner v8")
-print(f"  📊 6 Classes | seekwell_skincancer_v2")
+print(f"  📊 5 Display Classes | seekwell_skincancer_v2 (6-class model, ACK excluded)")
 print("=" * 65)
 
 # Device
@@ -307,15 +307,15 @@ def predict(image_bytes: bytes):
 
 # ─── Skin Validation ────────────────────────────────────────
 def validate_skin_image(img: Image.Image) -> dict:
-    """ตรวจว่าภาพเป็นภาพถ่ายผิวหนังหรือไม่"""
+    """ตรวจว่าภาพเป็นภาพถ่ายผิวหนังที่ชัดเจนหรือไม่ (เข้มงวด)"""
     w, h = img.size
     
-    # 1. ขนาดเล็กเกินไป
-    if w < 50 or h < 50:
-        return {"valid": False, "reason": "ภาพเล็กเกินไป กรุณาใช้ภาพที่ใหญ่กว่า 50x50 px"}
+    # 1. ขนาดเล็กเกินไป — ต้อง >= 100x100
+    if w < 100 or h < 100:
+        return {"valid": False, "reason": "ภาพเล็กเกินไป กรุณาใช้ภาพที่ใหญ่กว่า 100x100 px"}
     
     # 2. ตรวจสัดส่วนสีผิว (skin color detection)
-    img_small = img.resize((100, 100))
+    img_small = img.resize((128, 128))
     arr = np.array(img_small, dtype=np.float32)
     
     if len(arr.shape) < 3 or arr.shape[2] < 3:
@@ -324,14 +324,14 @@ def validate_skin_image(img: Image.Image) -> dict:
     r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
     
     # Skin color detection using multiple rules
-    # Rule 1: RGB range for skin tones
+    # Rule 1: RGB range for diverse skin tones
     skin_r = (r > 50) & (r < 255)
     skin_g = (g > 30) & (g < 230)
     skin_b = (b > 15) & (b < 210)
-    skin_rg = (r > g) & (r > b)  # Red channel dominant
+    skin_rg = (r > g) & (r > b)
     skin_mask1 = skin_r & skin_g & skin_b & skin_rg
     
-    # Rule 2: YCbCr color space (ดีกว่าสำหรับตรวจสีผิว)
+    # Rule 2: YCbCr color space
     y = 0.299 * r + 0.587 * g + 0.114 * b
     cb = 128 - 0.169 * r - 0.331 * g + 0.500 * b
     cr = 128 + 0.500 * r - 0.419 * g - 0.081 * b
@@ -340,27 +340,60 @@ def validate_skin_image(img: Image.Image) -> dict:
     skin_mask = skin_mask1 | skin_mask2
     skin_ratio = float(np.mean(skin_mask))
     
-    # 3. ตรวจ entropy — ภาพ screenshot/ข้อความจะมี std ต่ำมาก
+    # 3. ตรวจความชัด (Sharpness) — ใช้ Laplacian variance
     gray = np.mean(arr, axis=2)
+    # Laplacian approximation
+    from scipy.ndimage import laplace
+    lap = laplace(gray)
+    sharpness = float(np.var(lap))
+    
+    # 4. ตรวจ entropy — ภาพ screenshot/ข้อความจะมี std ต่ำมาก
     std_val = float(np.std(gray))
     
-    # 4. ตัดสิน
-    if skin_ratio < 0.08:
+    # 5. ตรวจว่ามีเนื้อหาเพียงพอ (ไม่ใช่ภาพขาว/ดำทั้งหมด)
+    mean_brightness = float(np.mean(gray))
+    
+    # ─── ตัดสิน (เข้มงวดกว่าเดิม) ───
+    
+    # สีผิวน้อยเกินไป (เดิม 8% → 20%)
+    if skin_ratio < 0.20:
         return {
             "valid": False, 
-            "reason": "ไม่พบสีผิวหนังในภาพ กรุณาถ่ายภาพผิวหนังโดยตรง",
+            "reason": f"ไม่พบสีผิวหนังเพียงพอในภาพ ({skin_ratio*100:.0f}%) กรุณาถ่ายภาพผิวหนังให้เต็มเฟรม",
             "skin_ratio": f"{skin_ratio*100:.0f}%"
         }
     
-    if std_val < 5:
+    # ภาพไม่ชัด
+    if sharpness < 30:
         return {
             "valid": False,
-            "reason": "ภาพดูเป็นสีเดียว กรุณาใช้ภาพถ่ายจริง"
+            "reason": f"ภาพไม่ชัดเพียงพอ กรุณาถ่ายภาพให้ชัดและอยู่นิ่ง",
+            "sharpness": f"{sharpness:.1f}"
+        }
+    
+    # ภาพสีเดียว (เดิม 5 → 12)
+    if std_val < 12:
+        return {
+            "valid": False,
+            "reason": "ภาพดูเหมือนสีเดียวกันทั้งหมด กรุณาใช้ภาพถ่ายจริงของผิวหนัง"
+        }
+    
+    # สว่างหรือมืดเกินไป
+    if mean_brightness < 30:
+        return {
+            "valid": False,
+            "reason": "ภาพมืดเกินไป กรุณาถ่ายในที่มีแสงเพียงพอ"
+        }
+    if mean_brightness > 245:
+        return {
+            "valid": False,
+            "reason": "ภาพสว่างเกินไป กรุณาลดความสว่างหรือหลีกเลี่ยงแสงจ้า"
         }
     
     return {
         "valid": True, 
         "skin_ratio": f"{skin_ratio*100:.0f}%",
+        "sharpness": f"{sharpness:.1f}",
         "std": f"{std_val:.1f}"
     }
 
