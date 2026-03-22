@@ -343,24 +343,39 @@ def validate_skin_image(img: Image.Image) -> dict:
     # 3. ตรวจความชัด (Sharpness) — ใช้ Laplacian variance
     gray = np.mean(arr, axis=2)
     # Laplacian approximation
-    from scipy.ndimage import laplace
+    from scipy.ndimage import laplace, sobel
     lap = laplace(gray)
     sharpness = float(np.var(lap))
     
-    # 4. ตรวจ entropy — ภาพ screenshot/ข้อความจะมี std ต่ำมาก
+    # 4. ตรวจ edge density — ภาพที่มีเส้นขอบเยอะ (ข้อความ, วัตถุ, screenshot) จะถูก reject
+    edge_x = sobel(gray, axis=0)
+    edge_y = sobel(gray, axis=1)
+    edge_mag = np.sqrt(edge_x**2 + edge_y**2)
+    edge_threshold = np.mean(edge_mag) + 1.5 * np.std(edge_mag)
+    edge_ratio = float(np.mean(edge_mag > edge_threshold))
+    
+    # 5. ตรวจ entropy — ภาพ screenshot/ข้อความจะมี std ต่ำมาก
     std_val = float(np.std(gray))
     
-    # 5. ตรวจว่ามีเนื้อหาเพียงพอ (ไม่ใช่ภาพขาว/ดำทั้งหมด)
+    # 6. ตรวจว่ามีเนื้อหาเพียงพอ (ไม่ใช่ภาพขาว/ดำทั้งหมด)
     mean_brightness = float(np.mean(gray))
     
-    # ─── ตัดสิน (เข้มงวดกว่าเดิม) ───
+    # ─── ตัดสิน (เข้มงวด ≥80% skin + ห้าม edge เยอะ) ───
     
-    # สีผิวน้อยเกินไป (เดิม 8% → 20%)
-    if skin_ratio < 0.20:
+    # สีผิวน้อยเกินไป (ต้อง ≥80%)
+    if skin_ratio < 0.80:
         return {
             "valid": False, 
-            "reason": f"ไม่พบสีผิวหนังเพียงพอในภาพ ({skin_ratio*100:.0f}%) กรุณาถ่ายภาพผิวหนังให้เต็มเฟรม",
+            "reason": f"ภาพนี้มีสีผิวหนังเพียง {skin_ratio*100:.0f}% (ต้อง ≥80%) กรุณาถ่ายภาพผิวหนังให้ชัดเจนและเต็มเฟรม",
             "skin_ratio": f"{skin_ratio*100:.0f}%"
+        }
+    
+    # มีเส้นขอบเยอะเกินไป (ข้อความ, วัตถุ, หลายสิ่ง)
+    if edge_ratio > 0.25:
+        return {
+            "valid": False,
+            "reason": f"ภาพมีรายละเอียด/เส้นขอบมากเกินไป ({edge_ratio*100:.0f}%) กรุณาถ่ายเฉพาะผิวหนัง ไม่ใช่ภาพที่มีข้อความ วัตถุ หรือฉากหลัง",
+            "edge_ratio": f"{edge_ratio*100:.0f}%"
         }
     
     # ภาพไม่ชัด
@@ -371,7 +386,7 @@ def validate_skin_image(img: Image.Image) -> dict:
             "sharpness": f"{sharpness:.1f}"
         }
     
-    # ภาพสีเดียว (เดิม 5 → 12)
+    # ภาพสีเดียว
     if std_val < 12:
         return {
             "valid": False,
@@ -393,6 +408,7 @@ def validate_skin_image(img: Image.Image) -> dict:
     return {
         "valid": True, 
         "skin_ratio": f"{skin_ratio*100:.0f}%",
+        "edge_ratio": f"{edge_ratio*100:.0f}%",
         "sharpness": f"{sharpness:.1f}",
         "std": f"{std_val:.1f}"
     }
