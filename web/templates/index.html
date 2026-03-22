@@ -1197,6 +1197,38 @@
         try { await startCamera(); } catch (e) { useFrontCamera = !useFrontCamera; await startCamera(); }
     }
 
+    // Helper: compute the exact crop rectangle in video-pixel coordinates
+    // that corresponds to the scan-frame overlay on screen.
+    function getFrameCropRect(video) {
+        const vw = video.videoWidth, vh = video.videoHeight;
+        const container = video.parentElement;                 // .camera-scanner
+        const dw = container.clientWidth, dh = container.clientHeight;
+
+        // object-fit: cover  → scale so video fills container, then center
+        const scale = Math.max(dw / vw, dh / vh);
+        const visW = vw * scale, visH = vh * scale;            // rendered size
+        const offX = (visW - dw) / 2, offY = (visH - dh) / 2; // hidden offset
+
+        // scan-frame element position on screen
+        const frame = document.getElementById('scanFrame');
+        const fr = frame.getBoundingClientRect();
+        const cr = container.getBoundingClientRect();
+
+        // frame position relative to container
+        const fx = fr.left - cr.left;
+        const fy = fr.top  - cr.top;
+        const fw = fr.width;
+        const fh = fr.height;
+
+        // map back to video-pixel coordinates
+        const sx = (fx + offX) / scale;
+        const sy = (fy + offY) / scale;
+        const sw = fw / scale;
+        const sh = fh / scale;
+
+        return { sx, sy, sw, sh };
+    }
+
     function startSkinDetection() {
         if (scanInterval) clearInterval(scanInterval);
         const video = document.getElementById('cameraVideo');
@@ -1208,12 +1240,10 @@
             if (video.readyState < 2 || isValidating) return;
             isValidating = true;
             try {
-                const sw = 128, sh = 128;
-                canvas.width = sw; canvas.height = sh;
-                const vw = video.videoWidth, vh = video.videoHeight;
-                const cropSize = Math.min(vw, vh) * 0.35;
-                const sx = (vw - cropSize) / 2, sy = (vh - cropSize) / 2;
-                ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, sw, sh);
+                const outW = 128, outH = 128;
+                canvas.width = outW; canvas.height = outH;
+                const { sx, sy, sw, sh } = getFrameCropRect(video);
+                ctx.drawImage(video, sx, sy, sw, sh, 0, 0, outW, outH);
 
                 const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.6));
                 const formData = new FormData();
@@ -1259,12 +1289,10 @@
         flash.classList.add('flash');
         setTimeout(() => flash.classList.remove('flash'), 200);
 
-        const vw = video.videoWidth, vh = video.videoHeight;
-        const cropSize = Math.min(vw, vh) * 0.35;
-        const sx = (vw - cropSize) / 2, sy = (vh - cropSize) / 2;
-        const outputSize = Math.min(720, Math.round(cropSize));
+        const { sx, sy, sw, sh } = getFrameCropRect(video);
+        const outputSize = Math.min(720, Math.round(Math.max(sw, sh)));
         canvas.width = outputSize; canvas.height = outputSize;
-        ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, outputSize, outputSize);
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, outputSize, outputSize);
 
         canvas.toBlob((blob) => {
             const file = new File([blob], 'camera_capture.jpg', { type: 'image/jpeg' });
