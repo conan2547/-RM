@@ -811,6 +811,102 @@ async def api_validate_frame(file: UploadFile = File(...)):
         return JSONResponse({"valid": False, "hint": f"Error: {str(e)}"})
 
 
+@app.post("/api/validate-upload")
+async def api_validate_upload(file: UploadFile = File(...)):
+    """ตรวจภาพที่อัปโหลดว่าเป็นผิวหนังจริงหรือไม่ (เข้มงวด ≥80%)"""
+    try:
+        contents = await file.read()
+        if len(contents) == 0:
+            return JSONResponse({"valid": False, "reason": "ไม่มีภาพ", "skin_ratio": 0})
+        
+        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        w, h = img.size
+        
+        # ขนาดขั้นต่ำ
+        if w < 100 or h < 100:
+            return JSONResponse({"valid": False, "reason": "ภาพเล็กเกินไป กรุณาใช้ภาพที่ใหญ่กว่า 100x100 px", "skin_ratio": 0})
+        
+        # Resize เพื่อประมวลผลเร็ว
+        img_small = img.resize((128, 128))
+        arr = np.array(img_small, dtype=np.float32)
+        
+        if len(arr.shape) < 3 or arr.shape[2] < 3:
+            return JSONResponse({"valid": False, "reason": "กรุณาใช้ภาพสี (ไม่ใช่ขาวดำ)", "skin_ratio": 0})
+        
+        r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
+        
+        # Skin detection (RGB + YCbCr)
+        skin_r = (r > 50) & (r < 255)
+        skin_g = (g > 30) & (g < 230)
+        skin_b = (b > 15) & (b < 210)
+        skin_rg = (r > g) & (r > b)
+        skin_mask1 = skin_r & skin_g & skin_b & skin_rg
+        
+        y = 0.299 * r + 0.587 * g + 0.114 * b
+        cb = 128 - 0.169 * r - 0.331 * g + 0.500 * b
+        cr = 128 + 0.500 * r - 0.419 * g - 0.081 * b
+        skin_mask2 = (y > 60) & (cb > 77) & (cb < 127) & (cr > 133) & (cr < 173)
+        
+        skin_mask = skin_mask1 | skin_mask2
+        skin_ratio = float(np.mean(skin_mask))
+        skin_pct = round(skin_ratio * 100)
+        
+        # Sharpness - Laplacian
+        gray = np.mean(arr, axis=2)
+        from scipy.ndimage import laplace
+        lap = laplace(gray)
+        sharpness = float(np.var(lap))
+        
+        # Brightness
+        mean_brightness = float(np.mean(gray))
+        std_val = float(np.std(gray))
+        
+        # ─── ตัดสิน (ต้อง ≥80% skin) ───
+        if skin_pct < 80:
+            return JSONResponse({
+                "valid": False,
+                "reason": f"ภาพนี้มีสีผิวหนังเพียง {skin_pct}% (ต้อง ≥80%) กรุณาใช้ภาพถ่ายผิวหนังโดยตรง",
+                "skin_ratio": skin_pct
+            })
+        
+        if sharpness < 30:
+            return JSONResponse({
+                "valid": False,
+                "reason": "ภาพไม่ชัดเพียงพอ กรุณาถ่ายภาพให้ชัดและนิ่ง",
+                "skin_ratio": skin_pct
+            })
+        
+        if mean_brightness < 30:
+            return JSONResponse({
+                "valid": False,
+                "reason": "ภาพมืดเกินไป กรุณาถ่ายในที่มีแสงเพียงพอ",
+                "skin_ratio": skin_pct
+            })
+        
+        if mean_brightness > 245:
+            return JSONResponse({
+                "valid": False,
+                "reason": "ภาพสว่างเกินไป กรุณาลดแสง",
+                "skin_ratio": skin_pct
+            })
+        
+        if std_val < 12:
+            return JSONResponse({
+                "valid": False,
+                "reason": "ภาพดูเหมือนสีเดียว กรุณาใช้ภาพถ่ายจริง",
+                "skin_ratio": skin_pct
+            })
+        
+        return JSONResponse({
+            "valid": True,
+            "skin_ratio": skin_pct,
+            "sharpness": round(sharpness, 1),
+            "reason": f"ผ่าน! ผิวหนัง {skin_pct}%"
+        })
+    except Exception as e:
+        return JSONResponse({"valid": False, "reason": f"เกิดข้อผิดพลาด: {str(e)}", "skin_ratio": 0})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})

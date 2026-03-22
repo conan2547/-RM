@@ -725,20 +725,98 @@
     fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
     cameraInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
 
-    function handleFile(file) {
+    async function handleFile(file) {
         if (!file.type.startsWith('image/')) { alert('กรุณาเลือกไฟล์ภาพ'); return; }
-        selectedFile = file;
-        window._capturedFile = null;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            previewImg.src = e.target.result;
-            document.getElementById('inputGrid').style.display = 'none';
-            previewContainer.style.display = 'block';
-            analyzeSection.style.display = 'flex';
-            document.getElementById('results').style.display = 'none';
-            document.getElementById('segPreview').style.display = 'none';
-        };
-        reader.readAsDataURL(file);
+        
+        // แสดง loading ขณะตรวจสอบ
+        uploadPrompt.textContent = '🔍 กำลังตรวจสอบภาพ...';
+        uploadArea.style.pointerEvents = 'none';
+        uploadArea.style.opacity = '0.6';
+        
+        try {
+            // ส่งภาพไปตรวจสอบก่อน (ต้องเป็นผิวหนัง ≥80%)
+            const formData = new FormData();
+            formData.append('file', file);
+            const resp = await fetch('/api/validate-upload', { method: 'POST', body: formData });
+            const data = await resp.json();
+            
+            // คืน UI
+            uploadPrompt.textContent = 'Upload Photo';
+            uploadArea.style.pointerEvents = '';
+            uploadArea.style.opacity = '';
+            
+            if (!data.valid) {
+                // แสดง popup แจ้งปฏิเสธ
+                showUploadRejection(data.reason, data.skin_ratio || 0);
+                fileInput.value = '';
+                return;
+            }
+            
+            // ผ่าน! แสดง preview
+            selectedFile = file;
+            window._capturedFile = null;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target.result;
+                document.getElementById('inputGrid').style.display = 'none';
+                previewContainer.style.display = 'block';
+                analyzeSection.style.display = 'flex';
+                document.getElementById('results').style.display = 'none';
+                document.getElementById('segPreview').style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        } catch (err) {
+            uploadPrompt.textContent = 'Upload Photo';
+            uploadArea.style.pointerEvents = '';
+            uploadArea.style.opacity = '';
+            console.error('Validate upload error:', err);
+            // ถ้า API ล่ม ก็ยอมให้ผ่าน (fallback)
+            selectedFile = file;
+            window._capturedFile = null;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target.result;
+                document.getElementById('inputGrid').style.display = 'none';
+                previewContainer.style.display = 'block';
+                analyzeSection.style.display = 'flex';
+                document.getElementById('results').style.display = 'none';
+                document.getElementById('segPreview').style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+    
+    function showUploadRejection(reason, skinPct) {
+        // ลบ popup เก่าถ้ามี
+        const old = document.getElementById('uploadRejectPopup');
+        if (old) old.remove();
+        
+        const popup = document.createElement('div');
+        popup.id = 'uploadRejectPopup';
+        popup.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);animation:fadeIn 0.2s ease;';
+        popup.innerHTML = `
+            <div style="background:white;border-radius:16px;padding:32px;max-width:400px;width:90%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);animation:slideUp 0.3s ease;">
+                <div style="width:60px;height:60px;margin:0 auto 16px;background:#fef2f2;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;">🚫</div>
+                <h3 style="font-size:18px;font-weight:700;color:#1e293b;margin-bottom:8px;">ภาพไม่ผ่านการคัดกรอง</h3>
+                <p style="font-size:14px;color:#64748b;line-height:1.6;margin-bottom:${skinPct > 0 ? '12px' : '20px'};">${reason}</p>
+                ${skinPct > 0 && skinPct < 80 ? `
+                    <div style="background:#f8fafc;border-radius:8px;padding:12px;margin-bottom:20px;">
+                        <div style="display:flex;justify-content:space-between;font-size:12px;color:#94a3b8;margin-bottom:4px;">
+                            <span>สัดส่วนผิวหนัง</span>
+                            <span>${skinPct}% / 80%</span>
+                        </div>
+                        <div style="height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;">
+                            <div style="height:100%;width:${skinPct}%;background:${skinPct >= 60 ? '#f59e0b' : '#ef4444'};border-radius:3px;transition:width 0.5s;"></div>
+                        </div>
+                    </div>
+                ` : ''}
+                <button onclick="this.closest('#uploadRejectPopup').remove()" style="background:linear-gradient(135deg,#00647c,#007f9d);color:white;border:none;padding:12px 32px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;width:100%;">
+                    เข้าใจแล้ว — เลือกภาพใหม่
+                </button>
+            </div>
+        `;
+        document.body.appendChild(popup);
+        popup.addEventListener('click', (e) => { if (e.target === popup) popup.remove(); });
     }
 
     function resetUpload(e) {
