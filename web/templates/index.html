@@ -1,0 +1,1289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dermis Core - Skin Cancer Scanner</title>
+    <meta name="description" content="AI-powered skin cancer detection with UNet segmentation and ensemble classification">
+
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "secondary-fixed-dim": "#68dba9",
+              "on-tertiary-fixed": "#0d1c2f",
+              "on-error-container": "#93000a",
+              "error-container": "#ffdad6",
+              "on-surface-variant": "#3e484d",
+              "on-secondary-container": "#00714e",
+              "primary-fixed-dim": "#6cd3f7",
+              "tertiary-container": "#67758c",
+              "tertiary": "#4f5d72",
+              "surface-tint": "#006780",
+              "secondary-container": "#82f5c1",
+              "on-primary-fixed": "#001f28",
+              "surface-container-lowest": "#ffffff",
+              "on-secondary": "#ffffff",
+              "on-tertiary-fixed-variant": "#3a485c",
+              "on-primary-fixed-variant": "#004e61",
+              "surface-container-high": "#e6e8ea",
+              "secondary": "#006c4a",
+              "on-background": "#191c1e",
+              "primary": "#00647c",
+              "on-tertiary-container": "#fdfcff",
+              "inverse-primary": "#6cd3f7",
+              "surface-variant": "#e0e3e5",
+              "outline": "#6e797e",
+              "surface-container-low": "#f2f4f6",
+              "surface": "#f7f9fb",
+              "outline-variant": "#bdc8ce",
+              "background": "#f7f9fb",
+              "surface-container": "#eceef0",
+              "inverse-on-surface": "#eff1f3",
+              "primary-fixed": "#b7eaff",
+              "secondary-fixed": "#85f8c4",
+              "tertiary-fixed": "#d5e3fd",
+              "surface-dim": "#d8dadc",
+              "primary-container": "#007f9d",
+              "on-primary-container": "#fafdff",
+              "on-surface": "#191c1e",
+              "on-secondary-fixed": "#002114",
+              "on-tertiary": "#ffffff",
+              "error": "#ba1a1a",
+              "on-error": "#ffffff",
+              "tertiary-fixed-dim": "#b9c7e0",
+              "on-primary": "#ffffff",
+              "on-secondary-fixed-variant": "#005137",
+              "surface-bright": "#f7f9fb",
+              "inverse-surface": "#2d3133",
+              "surface-container-highest": "#e0e3e5"
+            },
+            fontFamily: {
+              "headline": ["Manrope", "sans-serif"],
+              "body": ["Manrope", "sans-serif"],
+              "label": ["Manrope", "sans-serif"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+
+    <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            line-height: 1;
+            text-transform: none;
+            letter-spacing: normal;
+            word-wrap: normal;
+            white-space: nowrap;
+            direction: ltr;
+        }
+        .glass-nav { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        .unet-overlay { box-shadow: 0 0 0 2px #007f9d, 0 0 15px rgba(0, 127, 157, 0.4); }
+        .primary-gradient { background: linear-gradient(135deg, #00647c 0%, #007f9d 100%); }
+
+        /* ─── Loading Overlay ─── */
+        .loading-overlay {
+            display: none; position: fixed; inset: 0; z-index: 9999;
+            background: rgba(255,255,255,0.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+        }
+        .loading-overlay.show { display: flex; }
+        .loading-text { font-size: 18px; font-weight: 700; color: #006780; }
+        .spinner-wrap { position: relative; width: 56px; height: 56px; }
+        .spinner-ring { position: absolute; inset: 0; border: 3px solid #e0e3e5; border-top-color: #006780; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        .spinner-inner { position: absolute; inset: 8px; border: 3px solid transparent; border-bottom-color: #007f9d; border-radius: 50%; animation: spin 1.2s linear infinite reverse; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-steps { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+        .loading-steps .step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #6e797e; opacity: 0.4; transition: all 0.3s; }
+        .loading-steps .step svg { width: 16px; height: 16px; stroke: currentColor; }
+        .loading-steps .step.active { opacity: 1; color: #006780; font-weight: 600; }
+        .loading-steps .step.done { opacity: 1; color: #059669; }
+
+        /* ─── Camera Scanner ─── */
+        .camera-scanner { display: none; position: fixed; inset: 0; z-index: 10000; background: #000; }
+        .camera-scanner.active { display: block; }
+        .camera-scanner video { width: 100%; height: 100%; object-fit: cover; }
+        .camera-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; }
+        .camera-top-bar { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent); color: white; z-index: 2; }
+        .camera-top-bar button { display: flex; align-items: center; gap: 6px; color: white; background: rgba(255,255,255,0.15); backdrop-filter: blur(8px); border: none; padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .camera-top-bar button svg { width: 18px; height: 18px; stroke: white; }
+        .camera-top-title { font-size: 15px; font-weight: 700; }
+        .camera-indicators { display: flex; justify-content: center; gap: 12px; padding: 8px 20px; z-index: 2; }
+        .cam-indicator { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; backdrop-filter: blur(8px); }
+        .cam-indicator svg { width: 16px; height: 16px; }
+        .cam-indicator.neutral { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.7); }
+        .cam-indicator.good { background: rgba(5,150,105,0.25); color: #6ee7b7; }
+        .cam-indicator.bad { background: rgba(239,68,68,0.25); color: #fca5a5; }
+        .camera-frame-area { flex: 1; display: flex; align-items: center; justify-content: center; z-index: 2; }
+        .scan-frame { position: relative; width: 65vmin; height: 65vmin; max-width: 320px; max-height: 320px; }
+        .scan-frame .corner { position: absolute; width: 28px; height: 28px; border-color: rgba(255,255,255,0.5); border-style: solid; border-width: 0; transition: border-color 0.3s; }
+        .scan-frame .corner.tl { top:0;left:0; border-top-width:3px; border-left-width:3px; border-radius:8px 0 0 0; }
+        .scan-frame .corner.tr { top:0;right:0; border-top-width:3px; border-right-width:3px; border-radius:0 8px 0 0; }
+        .scan-frame .corner.bl { bottom:0;left:0; border-bottom-width:3px; border-left-width:3px; border-radius:0 0 0 8px; }
+        .scan-frame .corner.br { bottom:0;right:0; border-bottom-width:3px; border-right-width:3px; border-radius:0 0 8px 0; }
+        .scan-frame.detected .corner { border-color: #6ee7b7; }
+        .scan-line { position: absolute; left: 10%; right: 10%; height: 2px; background: linear-gradient(90deg, transparent, #6cd3f7, transparent); animation: scanMove 2.5s ease-in-out infinite; }
+        @keyframes scanMove { 0%,100% { top: 15%; } 50% { top: 85%; } }
+        .scan-label { position: absolute; bottom: -32px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 13px; color: rgba(255,255,255,0.7); font-weight: 600; }
+        .camera-bottom { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 30px 20px 40px; background: linear-gradient(to top, rgba(0,0,0,0.6), transparent); z-index: 2; }
+        .capture-btn { width: 72px; height: 72px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.5); background: transparent; cursor: pointer; position: relative; transition: all 0.2s; }
+        .capture-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .capture-btn.ready { border-color: #6ee7b7; box-shadow: 0 0 20px rgba(110,231,183,0.3); }
+        .capture-btn::after { content:''; position: absolute; inset: 4px; border-radius: 50%; background: white; transition: all 0.15s; }
+        .capture-btn:active::after { inset: 8px; }
+        .camera-hint { color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500; }
+        .camera-flash { display: none; position: fixed; inset: 0; z-index: 10001; background: white; pointer-events: none; }
+        .camera-flash.flash { display: block; animation: flashAnim 0.2s ease-out; }
+        @keyframes flashAnim { 0% { opacity: 0.9; } 100% { opacity: 0; } }
+
+        /* ─── Animations ─── */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+
+        /* ─── Responsive ─── */
+        @media (max-width: 768px) { .scan-frame { width: 75vmin; height: 75vmin; } }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface selection:bg-primary-fixed selection:text-on-primary-fixed">
+
+<!-- Navigation -->
+<nav class="fixed top-0 w-full z-50 bg-surface/70 backdrop-blur-xl shadow-sm shadow-cyan-900/5 h-16 flex justify-between items-center px-8 font-manrope antialiased tracking-tight">
+    <div class="flex items-center gap-2">
+        <img src="/static/images/logo.png" alt="Logo" class="w-8 h-8 rounded-lg">
+        <span class="text-lg font-bold tracking-tight text-cyan-900">AI for Skin Cancer Detection</span>
+    </div>
+    <div class="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
+        <a id="navGuide" class="text-cyan-800 font-semibold border-b-2 border-cyan-700 pb-1 cursor-pointer" onclick="showView('guide')">Guide</a>
+        <a id="navDashboard" class="text-slate-500 hover:text-cyan-700 transition-colors cursor-pointer" onclick="showView('scanner')">Scanner</a>
+    </div>
+    <div class="flex items-center gap-4">
+        <button class="p-2 text-slate-500 hover:bg-slate-100/50 rounded-lg active:scale-95 duration-200 transition-all">
+            <span class="material-symbols-outlined">notifications</span>
+        </button>
+        <button class="p-2 text-slate-500 hover:bg-slate-100/50 rounded-lg active:scale-95 duration-200 transition-all">
+            <span class="material-symbols-outlined">account_circle</span>
+        </button>
+    </div>
+</nav>
+
+<main class="pt-24 pb-20 px-6 max-w-7xl mx-auto">
+    <div id="scannerView" style="display: none;">
+    <!-- Hero Section -->
+    <header class="mb-16 mt-8 lg:mt-12 text-left">
+        <h1 class="text-5xl lg:text-6xl font-extrabold tracking-tighter text-on-surface mb-4 leading-none">
+            Skin Cancer AI Scanner
+        </h1>
+        <p class="text-xl text-on-surface-variant max-w-2xl font-medium tracking-tight">
+            Supporting 8 Lesion Classes + UNet Auto-Segmentation
+        </p>
+    </header>
+
+    <!-- Input Methods Bento Grid -->
+    <section id="inputGrid" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+        <!-- Card 1: Camera -->
+        <div onclick="openCameraScanner()" id="cam-start-btn" class="group relative bg-surface-container-lowest rounded-xl p-8 transition-all hover:bg-white hover:shadow-2xl hover:shadow-primary/5 cursor-pointer flex flex-col items-center text-center justify-center min-h-[320px] overflow-hidden">
+            <div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <div class="mb-6 w-20 h-20 bg-primary-container/10 rounded-full flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                <span class="material-symbols-outlined text-4xl" style="font-variation-settings: 'wght' 300;">camera_front</span>
+            </div>
+            <h3 class="text-2xl font-bold text-on-surface mb-2">Real-time Camera Scanner</h3>
+            <p class="text-on-surface-variant font-medium">Live Skin Distance Validation</p>
+            <div class="mt-6 flex gap-2">
+                <span class="px-3 py-1 bg-secondary-container text-on-secondary-container text-xs font-bold rounded-full uppercase tracking-wider">Active Guide</span>
+            </div>
+        </div>
+        <!-- Card 2: Upload -->
+        <div id="uploadArea" class="group bg-surface-container-low border-2 border-dashed border-outline-variant/30 rounded-xl p-8 hover:bg-surface-container-lowest hover:border-primary/40 transition-all cursor-pointer flex flex-col items-center text-center justify-center min-h-[320px]">
+            <div class="mb-6 w-20 h-20 bg-surface-container-high rounded-full flex items-center justify-center text-on-surface-variant group-hover:text-primary transition-colors">
+                <span class="material-symbols-outlined text-4xl">upload_file</span>
+            </div>
+            <h3 class="text-2xl font-bold text-on-surface mb-2" id="uploadPrompt">Upload Photo</h3>
+            <p class="text-on-surface-variant font-medium">Drag &amp; drop clinical imagery</p>
+            <p class="mt-4 text-xs font-semibold text-outline uppercase tracking-widest">Supports RAW, HEIC, JPG</p>
+        </div>
+    </section>
+
+    <input type="file" id="fileInput" accept="image/*" aria-label="Choose image" class="hidden">
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" aria-label="Take Photo" class="hidden">
+
+    <!-- Preview -->
+    <div class="preview-container relative mx-auto max-w-lg mb-12 shadow-2xl rounded-xl overflow-hidden" id="previewContainer" style="display: none;">
+        <img class="preview-img w-full h-auto object-cover" id="previewImg" alt="Uploaded Image">
+        <button class="change-btn absolute top-2 right-2 bg-white/90 backdrop-blur text-primary px-3 py-1.5 rounded-md font-bold text-sm shadow-md hover:bg-white" onclick="resetUpload(event)">
+            Change Photo
+        </button>
+    </div>
+
+    <!-- Primary Action -->
+    <div class="flex flex-col items-center justify-center mb-24" id="analyzeSection" style="display:none;">
+        <button id="analyzeBtn" onclick="analyze()" class="primary-gradient group relative w-full max-w-md py-6 px-12 rounded-xl text-white font-bold text-xl shadow-xl shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all overflow-hidden">
+            <div class="relative z-10 flex items-center justify-center gap-3">
+                <span class="material-symbols-outlined" style="font-variation-settings: 'wght' 600;">search</span>
+                Analyze Automatically
+            </div>
+        </button>
+        <p class="mt-6 text-sm font-semibold text-on-surface-variant/60 flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">verified_user</span>
+            AI Auto-Segmentation + Ensemble Classification
+        </p>
+    </div>
+
+    <!-- Segmentation Preview -->
+    <section id="segPreview" style="display: none;" class="bg-surface-container-low rounded-2xl p-8 lg:p-12 mb-8">
+        <div class="flex flex-col md:flex-row justify-between items-end mb-8 gap-4">
+            <div>
+                <span class="seg-preview-title text-primary font-bold tracking-widest uppercase text-xs">Analysis Results</span>
+                <h2 class="text-3xl font-bold text-on-surface mt-2 tracking-tight">AI Auto-Segmentation</h2>
+            </div>
+        </div>
+        <div class="relative overflow-hidden group rounded-xl shadow-lg border border-outline-variant/30 flex justify-center items-center bg-black/5" style="min-height:300px;">
+            <img id="segImg" class="max-w-full max-h-[500px] object-contain" alt="Segmentation">
+        </div>
+        <div id="segInfo" class="mt-4 text-center font-bold text-on-surface-variant text-sm"></div>
+    </section>
+
+    <!-- Results Container -->
+    <div id="results" class="results" style="display: none;"></div>
+    </div><!-- end scannerView -->
+
+    <!-- ═══ GUIDE DASHBOARD ═══ -->
+    <div id="guideView">
+
+        <!-- Guide Hero — Full Bleed -->
+        <header class="mb-20 relative left-1/2 right-1/2 w-screen" style="margin-left: -50vw; margin-right: -50vw;">
+            <div class="relative overflow-hidden min-h-[360px] lg:min-h-[400px] flex items-end lg:items-center">
+                <!-- Background Image -->
+                <img src="/static/images/hero_medical.jpg" alt="Doctor scanning skin" class="absolute inset-0 w-full h-full object-cover">
+                <!-- Gradient Overlay -->
+                <div class="absolute inset-0 bg-gradient-to-r from-[#002a36]/90 via-[#00394d]/75 to-transparent"></div>
+                <div class="absolute inset-0 bg-gradient-to-t from-[#002a36]/60 via-transparent to-transparent lg:bg-none"></div>
+                <!-- Content -->
+                <div class="relative z-10 p-8 lg:p-16 xl:p-20 max-w-xl">
+                    <span class="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-4 py-1.5 rounded-full text-white/80 text-xs font-bold tracking-widest uppercase mb-6">
+                        <span class="material-symbols-outlined text-sm">verified</span>
+                        AI-POWERED SKIN ANALYSIS
+                    </span>
+                    <h1 class="text-4xl lg:text-5xl font-extrabold tracking-tighter text-white mb-4 leading-[1.1]">
+                        ตรวจสอบผิวหนังของคุณ<br>อย่างแม่นยำด้วย AI
+                    </h1>
+                    <p class="text-lg text-white/70 font-medium tracking-tight leading-relaxed mb-8 max-w-md">
+                        เพียงถ่ายภาพรอยโรค ระบบ AI จะช่วยคัดกรอง<br>โรคผิวหนัง 7 ชนิดได้ทันที
+                    </p>
+                    <!-- Stats Row -->
+                    <div class="flex flex-wrap gap-4 mb-8">
+                        <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
+                            <div class="text-2xl font-extrabold text-white">7</div>
+                            <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">Conditions</div>
+                        </div>
+                        <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
+                            <div class="text-2xl font-extrabold text-white">ViT</div>
+                            <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">AI Model</div>
+                        </div>
+                        <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
+                            <div class="text-2xl font-extrabold text-white">UNet</div>
+                            <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">Segmentation</div>
+                        </div>
+                        <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
+                            <div class="text-2xl font-extrabold text-white">&lt;5s</div>
+                            <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">Analysis</div>
+                        </div>
+                    </div>
+                    <!-- CTA Buttons -->
+                    <div class="flex flex-wrap gap-3">
+                        <button onclick="showView('scanner')" class="bg-white text-primary py-4 px-8 rounded-xl font-bold shadow-lg hover:bg-white/90 active:scale-[0.98] transition-all flex items-center gap-2">
+                            <span class="material-symbols-outlined">search</span>
+                            เริ่มวิเคราะห์เลย
+                        </button>
+                        <a href="#diseaseSection" class="bg-white/10 backdrop-blur-md text-white py-4 px-8 rounded-xl font-bold hover:bg-white/20 transition-all flex items-center gap-2">
+                            <span class="material-symbols-outlined">menu_book</span>
+                            ดูข้อมูลโรค
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- ─── Key Facts (SkinVision-style) ─── -->
+        <section class="mb-20">
+            <div class="mb-10 text-center">
+                <span class="text-primary font-bold tracking-widest text-xs uppercase mb-2 block">WHY USE DERMIS CORE</span>
+                <h2 class="text-3xl font-extrabold tracking-tighter text-on-surface">ทำไมต้องตรวจผิวหนัง?</h2>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+                <!-- Card 1 -->
+                <div class="fact-card group bg-surface-container-high/40 hover:bg-primary rounded-2xl p-10 text-center cursor-pointer transition-all duration-500 ease-out hover:shadow-2xl hover:shadow-primary/30 hover:scale-[1.02]">
+                    <div class="flex justify-center mb-6">
+                        <svg class="transition-all duration-500" width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="22" cy="20" r="6" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2" fill="none"/>
+                            <circle cx="42" cy="20" r="6" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2" fill="none"/>
+                            <circle cx="32" cy="18" r="7" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2.5" fill="none"/>
+                            <line x1="22" y1="26" x2="22" y2="44" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <line x1="32" y1="25" x2="32" y2="48" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2.5"/>
+                            <line x1="42" y1="26" x2="42" y2="44" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <line x1="18" y1="36" x2="26" y2="36" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <line x1="28" y1="38" x2="36" y2="38" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2.5"/>
+                            <line x1="38" y1="36" x2="46" y2="36" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <circle cx="32" cy="54" r="3" class="fill-primary group-hover:fill-white transition-all duration-500"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-extrabold text-on-surface group-hover:text-white mb-3 tracking-tight transition-colors duration-500">มะเร็งผิวหนังพบบ่อยที่สุด<br>ในโลก</h3>
+                    <p class="text-sm text-on-surface-variant group-hover:text-white/80 leading-relaxed max-h-0 overflow-hidden opacity-0 group-hover:max-h-24 group-hover:opacity-100 transition-all duration-500">มะเร็งผิวหนังพบมากกว่าที่คิด<br>1 ใน 5 คนมีโอกาสเผชิญ<br>กับมะเร็งผิวหนังในชีวิต</p>
+                    <div class="mt-4 flex justify-center opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-500 delay-100">
+                        <span class="material-symbols-outlined text-white text-2xl animate-bounce">arrow_downward</span>
+                    </div>
+                </div>
+
+                <!-- Card 2 -->
+                <div class="fact-card group bg-surface-container-high/40 hover:bg-primary rounded-2xl p-10 text-center cursor-pointer transition-all duration-500 ease-out hover:shadow-2xl hover:shadow-primary/30 hover:scale-[1.02]">
+                    <div class="flex justify-center mb-6">
+                        <svg class="transition-all duration-500" width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="32" cy="32" r="12" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2" fill="none" stroke-dasharray="4 3"/>
+                            <circle cx="32" cy="32" r="5" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2" fill="none"/>
+                            <line x1="32" y1="8" x2="32" y2="16" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <line x1="32" y1="48" x2="32" y2="56" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <line x1="8" y1="32" x2="16" y2="32" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <line x1="48" y1="32" x2="56" y2="32" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2"/>
+                            <line x1="15" y1="15" x2="20" y2="20" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="1.5"/>
+                            <line x1="44" y1="44" x2="49" y2="49" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="1.5"/>
+                            <line x1="49" y1="15" x2="44" y2="20" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="1.5"/>
+                            <line x1="20" y1="44" x2="15" y2="49" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="1.5"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-extrabold text-on-surface group-hover:text-white mb-3 tracking-tight transition-colors duration-500">ส่วนใหญ่เกิดจาก<br>รังสี UV สะสม</h3>
+                    <p class="text-sm text-on-surface-variant group-hover:text-white/80 leading-relaxed max-h-0 overflow-hidden opacity-0 group-hover:max-h-24 group-hover:opacity-100 transition-all duration-500">แสงแดดเป็นสาเหตุหลัก<br>ของมะเร็งผิวหนัง การป้องกัน<br>และตรวจพบเร็วช่วยลดความเสี่ยง</p>
+                    <div class="mt-4 flex justify-center opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-500 delay-100">
+                        <span class="material-symbols-outlined text-white text-2xl animate-bounce">arrow_downward</span>
+                    </div>
+                </div>
+
+                <!-- Card 3 -->
+                <div class="fact-card group bg-surface-container-high/40 hover:bg-primary rounded-2xl p-10 text-center cursor-pointer transition-all duration-500 ease-out hover:shadow-2xl hover:shadow-primary/30 hover:scale-[1.02]">
+                    <div class="flex justify-center mb-6">
+                        <svg class="transition-all duration-500" width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="28" cy="28" r="16" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2.5" fill="none"/>
+                            <line x1="39" y1="39" x2="54" y2="54" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="3" stroke-linecap="round"/>
+                            <path d="M22 28 L26 32 L34 24" class="stroke-primary group-hover:stroke-white transition-all duration-500" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-extrabold text-on-surface group-hover:text-white mb-3 tracking-tight transition-colors duration-500">มะเร็งผิวหนังรักษาได้<br>หากตรวจพบเร็ว</h3>
+                    <p class="text-sm text-on-surface-variant group-hover:text-white/80 leading-relaxed max-h-0 overflow-hidden opacity-0 group-hover:max-h-24 group-hover:opacity-100 transition-all duration-500">อัตราการรักษาหายสูงถึง 99%<br>เมื่อตรวจพบในระยะเริ่มต้น<br>Dermis Core ช่วยคัดกรองได้ทันที</p>
+                    <div class="mt-4 flex justify-center opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-500 delay-100">
+                        <span class="material-symbols-outlined text-white text-2xl animate-bounce">arrow_downward</span>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ─── How It Works Steps ─── -->
+        <section class="mb-20">
+            <div class="mb-10 text-center">
+                <span class="text-primary font-bold tracking-widest text-xs uppercase mb-2 block">HOW IT WORKS</span>
+                <h2 class="text-3xl font-extrabold tracking-tighter text-on-surface">4 ขั้นตอนง่ายๆ</h2>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="relative text-center p-6">
+                    <div class="w-14 h-14 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
+                        <span class="material-symbols-outlined text-primary text-2xl" style="font-variation-settings: 'wght' 300;">photo_camera</span>
+                    </div>
+                    <div class="text-xs font-bold text-primary mb-1">STEP 1</div>
+                    <h4 class="font-bold text-sm">ถ่ายภาพ</h4>
+                    <p class="text-xs text-on-surface-variant mt-1">ระยะ 10-15 ซม.</p>
+                    <div class="hidden md:block absolute top-10 -right-2 text-outline-variant">
+                        <span class="material-symbols-outlined">arrow_forward</span>
+                    </div>
+                </div>
+                <div class="relative text-center p-6">
+                    <div class="w-14 h-14 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
+                        <span class="material-symbols-outlined text-primary text-2xl" style="font-variation-settings: 'wght' 300;">upload_file</span>
+                    </div>
+                    <div class="text-xs font-bold text-primary mb-1">STEP 2</div>
+                    <h4 class="font-bold text-sm">อัปโหลด</h4>
+                    <p class="text-xs text-on-surface-variant mt-1">JPG, PNG, HEIC</p>
+                    <div class="hidden md:block absolute top-10 -right-2 text-outline-variant">
+                        <span class="material-symbols-outlined">arrow_forward</span>
+                    </div>
+                </div>
+                <div class="relative text-center p-6">
+                    <div class="w-14 h-14 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
+                        <span class="material-symbols-outlined text-primary text-2xl" style="font-variation-settings: 'wght' 300;">psychology</span>
+                    </div>
+                    <div class="text-xs font-bold text-primary mb-1">STEP 3</div>
+                    <h4 class="font-bold text-sm">AI วิเคราะห์</h4>
+                    <p class="text-xs text-on-surface-variant mt-1">UNet + ViT 2-5 วินาที</p>
+                    <div class="hidden md:block absolute top-10 -right-2 text-outline-variant">
+                        <span class="material-symbols-outlined">arrow_forward</span>
+                    </div>
+                </div>
+                <div class="text-center p-6">
+                    <div class="w-14 h-14 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4">
+                        <span class="material-symbols-outlined text-primary text-2xl" style="font-variation-settings: 'wght' 300;">analytics</span>
+                    </div>
+                    <div class="text-xs font-bold text-primary mb-1">STEP 4</div>
+                    <h4 class="font-bold text-sm">ดูผลวิเคราะห์</h4>
+                    <p class="text-xs text-on-surface-variant mt-1">คำแนะนำทางการแพทย์</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="mb-20">
+            <div class="mb-10">
+                <span class="text-primary font-bold tracking-widest text-xs uppercase mb-2 block">DETECTABLE CONDITIONS</span>
+                <h2 class="text-3xl font-extrabold tracking-tighter text-on-surface">โรคผิวหนัง 5 กลุ่มที่ระบบวิเคราะห์ได้</h2>
+                <p class="text-on-surface-variant mt-2 font-medium">ข้อมูลลักษณะและอาการเบื้องต้นของแต่ละรอยโรค</p>
+            </div>
+
+            <!-- Carousel Container -->
+            <div class="relative" id="diseaseCarousel">
+                <!-- ปุ่มลูกศรซ้าย -->
+                <button onclick="slideDisease(-1)" class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 w-10 h-10 bg-white shadow-lg rounded-full flex items-center justify-center hover:bg-primary hover:text-white transition-all hover:scale-110" aria-label="Previous">
+                    <span class="material-symbols-outlined text-xl">chevron_left</span>
+                </button>
+
+                <!-- ปุ่มลูกศรขวา -->
+                <button onclick="slideDisease(1)" class="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 w-10 h-10 bg-white shadow-lg rounded-full flex items-center justify-center hover:bg-primary hover:text-white transition-all hover:scale-110" aria-label="Next">
+                    <span class="material-symbols-outlined text-xl">chevron_right</span>
+                </button>
+
+                <!-- Slides -->
+                <div class="overflow-hidden rounded-2xl mx-6" id="diseaseSlider">
+                    <div class="flex transition-transform duration-500 ease-in-out" id="diseaseTrack" style="width: 500%;">
+
+                        <!-- Slide 1: Melanoma -->
+                        <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
+                            <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
+                                <div class="h-52 bg-gradient-to-br from-red-100 to-red-50 relative overflow-hidden">
+                                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/Melanoma.jpg/400px-Melanoma.jpg" alt="Melanoma" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <div class="absolute top-3 right-3">
+                                        <span class="bg-error-container text-on-error-container px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Critical</span>
+                                    </div>
+                                </div>
+                                <div class="p-6">
+                                    <h3 class="text-lg font-bold mb-1">เมลาโนมา</h3>
+                                    <p class="text-sm text-on-surface-variant/70 mb-3">Melanoma (MEL)</p>
+                                    <p class="text-sm text-on-surface-variant leading-relaxed mb-4">มะเร็งผิวหนังชนิดร้ายแรงที่สุด เกิดจากเซลล์สร้างเม็ดสี (Melanocyte) กลายพันธุ์ สามารถแพร่กระจายไปอวัยวะอื่นได้หากไม่รักษาเร็ว</p>
+                                    <div class="space-y-2">
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-error text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>รูปร่างไม่สมมาตร ขอบไม่เรียบ สีไม่สม่ำเสมอ</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-error text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>หลายสีในจุดเดียว (น้ำตาล ดำ แดง)</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-error text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>ขนาด > 6 มม. หรือโตเร็วผิดปกติ</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Slide 2: BCC -->
+                        <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
+                            <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
+                                <div class="h-52 bg-gradient-to-br from-orange-100 to-orange-50 relative overflow-hidden">
+                                    <img src="/static/images/bcc.png" alt="Basal Cell Carcinoma" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <div class="absolute top-3 right-3">
+                                        <span class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">High Risk</span>
+                                    </div>
+                                </div>
+                                <div class="p-6">
+                                    <h3 class="text-lg font-bold mb-1">มะเร็งเบเซลเซลล์</h3>
+                                    <p class="text-sm text-on-surface-variant/70 mb-3">Basal Cell Carcinoma (BCC)</p>
+                                    <p class="text-sm text-on-surface-variant leading-relaxed mb-4">มะเร็งผิวหนังที่พบบ่อยที่สุด มักโตช้าและไม่แพร่กระจาย แต่สามารถทำลายเนื้อเยื่อรอบข้างได้หากปล่อยไว้นาน</p>
+                                    <div class="space-y-2">
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-orange-500 text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>ตุ่มใสสีเนื้อหรือสีชมพูมันวาว คล้ายไข่มุก</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-orange-500 text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>มีเส้นเลือดฝอยที่ผิวหน้า (Telangiectasia)</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-orange-500 text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>แผลเรื้อรังที่ไม่หายสักที</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Slide 3: SCC -->
+                        <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
+                            <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
+                                <div class="h-52 bg-gradient-to-br from-amber-100 to-amber-50 relative overflow-hidden">
+                                    <img src="/static/images/scc.png" alt="Squamous Cell Carcinoma" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <div class="absolute top-3 right-3">
+                                        <span class="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">High Risk</span>
+                                    </div>
+                                </div>
+                                <div class="p-6">
+                                    <h3 class="text-lg font-bold mb-1">มะเร็งสความัสเซลล์</h3>
+                                    <p class="text-sm text-on-surface-variant/70 mb-3">Squamous Cell Carcinoma (SCC)</p>
+                                    <p class="text-sm text-on-surface-variant leading-relaxed mb-4">มะเร็งผิวหนังที่พบบ่อยเป็นอันดับ 2 เกิดจากรังสี UV สะสม สามารถแพร่กระจายไปต่อมน้ำเหลืองได้หากไม่รักษา</p>
+                                    <div class="space-y-2">
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-amber-600 text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>ก้อนนูนแดง ผิวหยาบเป็นสะเก็ด</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-amber-600 text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>แผลเรื้อรังที่ไม่หาย มักบริเวณที่โดนแดด</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-amber-600 text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>อาจพัฒนาจาก Actinic Keratosis</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Slide 4: NEV -->
+                        <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
+                            <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
+                                <div class="h-52 bg-gradient-to-br from-emerald-100 to-emerald-50 relative overflow-hidden">
+                                    <img src="/static/images/nev.png" alt="Melanocytic Nevi" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <div class="absolute top-3 right-3">
+                                        <span class="bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Low Risk</span>
+                                    </div>
+                                </div>
+                                <div class="p-6">
+                                    <h3 class="text-lg font-bold mb-1">ไฝ/ขี้แมลงวัน</h3>
+                                    <p class="text-sm text-on-surface-variant/70 mb-3">Melanocytic Nevi (NEV)</p>
+                                    <p class="text-sm text-on-surface-variant leading-relaxed mb-4">จุดสีน้ำตาลหรือดำที่เกิดจากการรวมตัวของเซลล์สร้างเม็ดสี ส่วนใหญ่ไม่อันตราย แต่ควรสังเกตหากมีการเปลี่ยนแปลง</p>
+                                    <div class="space-y-2">
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-secondary text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>ขอบเขตชัดเจน สมมาตร สีสม่ำเสมอ</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-secondary text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>ขนาดคงที่ < 6 มม.</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-secondary text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>ไม่มีอาการคัน เจ็บ หรือเลือดออก</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Slide 5: SEK -->
+                        <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
+                            <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
+                                <div class="h-52 bg-gradient-to-br from-sky-100 to-sky-50 relative overflow-hidden">
+                                    <img src="/static/images/sek.png" alt="Seborrheic Keratosis" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <div class="absolute top-3 right-3">
+                                        <span class="bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Low Risk</span>
+                                    </div>
+                                </div>
+                                <div class="p-6">
+                                    <h3 class="text-lg font-bold mb-1">กระเนื้อ</h3>
+                                    <p class="text-sm text-on-surface-variant/70 mb-3">Seborrheic Keratosis (SEK)</p>
+                                    <p class="text-sm text-on-surface-variant leading-relaxed mb-4">เนื้องอกผิวหนังที่ไม่เป็นอันตราย พบบ่อยในผู้สูงอายุ (>40 ปี) ไม่ใช่มะเร็งและไม่ต้องรักษาหากไม่รำคาญ</p>
+                                    <div class="space-y-2">
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-secondary text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>ผิวหยาบ ขรุขระ คล้ายขี้ผึ้งติดแน่นบนผิว</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-secondary text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>สีน้ำตาลอ่อนถึงดำ นูนเล็กน้อย</div>
+                                        <div class="flex items-center gap-2 text-sm text-on-surface"><span class="material-symbols-outlined text-secondary text-base" style="font-variation-settings: 'FILL' 1;">check_circle</span>เกิดตามวัย ไม่ต้องรักษา ถ้ารบกวนจี้เย็นออกได้</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Dot Indicators -->
+                <div class="flex justify-center gap-2 mt-6" id="diseaseDots">
+                    <button onclick="goToSlide(0)" class="w-3 h-3 rounded-full bg-primary transition-all" aria-label="Slide 1"></button>
+                    <button onclick="goToSlide(1)" class="w-3 h-3 rounded-full bg-slate-300 transition-all" aria-label="Slide 2"></button>
+                    <button onclick="goToSlide(2)" class="w-3 h-3 rounded-full bg-slate-300 transition-all" aria-label="Slide 3"></button>
+                    <button onclick="goToSlide(3)" class="w-3 h-3 rounded-full bg-slate-300 transition-all" aria-label="Slide 4"></button>
+                    <button onclick="goToSlide(4)" class="w-3 h-3 rounded-full bg-slate-300 transition-all" aria-label="Slide 5"></button>
+                </div>
+            </div>
+
+            <!-- Carousel Script -->
+            <script>
+            (function(){
+                let currentSlide = 0;
+                const totalSlides = 5;
+                const track = document.getElementById('diseaseTrack');
+                const dots = document.getElementById('diseaseDots').children;
+                let autoTimer = null;
+                let touchStartX = 0;
+                let touchEndX = 0;
+
+                function updateSlide() {
+                    track.style.transform = 'translateX(-' + (currentSlide * 20) + '%)';
+                    for (let i = 0; i < dots.length; i++) {
+                        dots[i].className = i === currentSlide
+                            ? 'w-3 h-3 rounded-full bg-primary transition-all scale-125'
+                            : 'w-3 h-3 rounded-full bg-slate-300 transition-all hover:bg-slate-400';
+                    }
+                }
+
+                window.slideDisease = function(dir) {
+                    currentSlide = (currentSlide + dir + totalSlides) % totalSlides;
+                    updateSlide();
+                    resetAuto();
+                };
+
+                window.goToSlide = function(i) {
+                    currentSlide = i;
+                    updateSlide();
+                    resetAuto();
+                };
+
+                function startAuto() {
+                    autoTimer = setInterval(function() {
+                        currentSlide = (currentSlide + 1) % totalSlides;
+                        updateSlide();
+                    }, 5000);
+                }
+
+                function resetAuto() {
+                    clearInterval(autoTimer);
+                    startAuto();
+                }
+
+                // Touch / Swipe
+                const slider = document.getElementById('diseaseSlider');
+                slider.addEventListener('touchstart', function(e) {
+                    touchStartX = e.changedTouches[0].screenX;
+                }, { passive: true });
+                slider.addEventListener('touchend', function(e) {
+                    touchEndX = e.changedTouches[0].screenX;
+                    const diff = touchStartX - touchEndX;
+                    if (Math.abs(diff) > 50) {
+                        slideDisease(diff > 0 ? 1 : -1);
+                    }
+                }, { passive: true });
+
+                // Pause on hover
+                const carousel = document.getElementById('diseaseCarousel');
+                carousel.addEventListener('mouseenter', function() { clearInterval(autoTimer); });
+                carousel.addEventListener('mouseleave', function() { startAuto(); });
+
+                startAuto();
+            })();
+            </script>
+        </section>
+
+
+        <!-- ─── Disclaimer ─── -->
+        <section class="mb-8">
+            <div class="bg-primary-fixed/10 rounded-xl p-6 flex items-start gap-4">
+                <span class="material-symbols-outlined text-primary mt-0.5" style="font-variation-settings: 'FILL' 1;">info</span>
+                <div>
+                    <h4 class="font-bold text-primary text-sm mb-1">Medical Disclaimer</h4>
+                    <p class="text-sm text-on-surface-variant leading-relaxed">
+                        ผลวิเคราะห์จาก AI เป็นเพียงข้อมูลเบื้องต้นเพื่อการศึกษา ไม่ใช่การวินิจฉัยทางการแพทย์ กรุณาปรึกษาแพทย์ผิวหนังเพื่อการวินิจฉัยที่แม่นยำและการรักษาที่ถูกต้อง Dermis Core เป็นเครื่องมือช่วยคัดกรองเบื้องต้นเท่านั้น
+                    </p>
+                </div>
+            </div>
+        </section>
+
+    </div><!-- end guideView -->
+</main>
+
+<!-- Footer -->
+<footer class="w-full border-t border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center py-12 px-8 gap-6 text-xs font-manrope uppercase tracking-widest mt-12">
+    <div class="text-sm font-black text-slate-900">Dermis Core AI.</div>
+    <div class="text-slate-400">© 2024 Dermis Core AI. AI cannot replace professional medical diagnosis.</div>
+</footer>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loading" aria-live="polite">
+    <div class="spinner-wrap"><div class="spinner-ring"></div><div class="spinner-inner"></div></div>
+    <div class="loading-text">Analyzing...</div>
+    <div class="loading-steps">
+        <div class="step" id="step1"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Validating image</div>
+        <div class="step" id="step2"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>UNet Subtraction</div>
+        <div class="step" id="step3"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>ViT + Swin Classification</div>
+        <div class="step" id="step4"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Finalizing Results</div>
+    </div>
+</div>
+
+<!-- ═══ View Toggle Script ═══ -->
+<script>
+    function showView(view) {
+        const scanner = document.getElementById('scannerView');
+        const guide = document.getElementById('guideView');
+        const navDash = document.getElementById('navDashboard');
+        const navGuide = document.getElementById('navGuide');
+        const activeClass = 'text-cyan-800 font-semibold border-b-2 border-cyan-700 pb-1 cursor-pointer';
+        const inactiveClass = 'text-slate-500 hover:text-cyan-700 transition-colors cursor-pointer';
+        if (view === 'guide') {
+            scanner.style.display = 'none';
+            guide.style.display = 'block';
+            navDash.className = inactiveClass;
+            navGuide.className = activeClass;
+        } else {
+            scanner.style.display = 'block';
+            guide.style.display = 'none';
+            navDash.className = activeClass;
+            navGuide.className = inactiveClass;
+        }
+        window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+</script>
+
+<!-- ═══ Main Upload/Analyze Script ═══ -->
+<script>
+    let selectedFile = null;
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const cameraInput = document.getElementById('cameraInput');
+    const previewContainer = document.getElementById('previewContainer');
+    const previewImg = document.getElementById('previewImg');
+    const uploadPrompt = document.getElementById('uploadPrompt');
+    const analyzeSection = document.getElementById('analyzeSection');
+
+    // Upload events
+    uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('opacity-50'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('opacity-50'));
+    uploadArea.addEventListener('drop', (e) => { e.preventDefault(); uploadArea.classList.remove('opacity-50'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
+    uploadArea.addEventListener('click', (e) => { if (e.target.tagName !== 'LABEL' && !e.target.closest('label')) fileInput.click(); });
+    uploadArea.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+    fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+    cameraInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+    function handleFile(file) {
+        if (!file.type.startsWith('image/')) { alert('กรุณาเลือกไฟล์ภาพ'); return; }
+        selectedFile = file;
+        window._capturedFile = null;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            previewImg.src = e.target.result;
+            document.getElementById('inputGrid').style.display = 'none';
+            previewContainer.style.display = 'block';
+            analyzeSection.style.display = 'flex';
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('segPreview').style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function resetUpload(e) {
+        if (e) e.stopPropagation();
+        selectedFile = null;
+        window._capturedFile = null;
+        fileInput.value = '';
+        cameraInput.value = '';
+        document.getElementById('inputGrid').style.display = '';
+        previewContainer.style.display = 'none';
+        analyzeSection.style.display = 'none';
+        document.getElementById('results').style.display = 'none';
+        document.getElementById('segPreview').style.display = 'none';
+    }
+
+    async function analyze() {
+        const fileToUse = selectedFile || window._capturedFile;
+        if (!fileToUse) return;
+        const btn = document.getElementById('analyzeBtn');
+        const loading = document.getElementById('loading');
+        btn.disabled = true;
+        loading.classList.add('show');
+        const steps = ['step1','step2','step3','step4'];
+        let si = 0;
+        const stepInterval = setInterval(() => {
+            if (si > 0) document.getElementById(steps[si-1]).classList.replace('active','done');
+            if (si < steps.length) { document.getElementById(steps[si]).classList.add('active'); si++; }
+            else clearInterval(stepInterval);
+        }, 700);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', fileToUse);
+            const response = await fetch('/api/predict', { method: 'POST', body: formData });
+            const data = await response.json();
+
+            // ── Rejected Image ──
+            if (data.is_rejected) {
+                clearInterval(stepInterval);
+                loading.classList.remove('show');
+                steps.forEach(s => document.getElementById(s).classList.remove('active','done'));
+                btn.disabled = false;
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = `
+                <div class="animate-fade-in mt-8 max-w-xl mx-auto">
+                    <div class="bg-surface-container-lowest rounded-2xl p-10 text-center" style="box-shadow: 0 20px 40px rgba(0,75,93,0.06);">
+                        <!-- Icon -->
+                        <div class="w-16 h-16 mx-auto mb-5 bg-primary-fixed/30 rounded-full flex items-center justify-center">
+                            <span class="material-symbols-outlined text-primary text-[36px]" style="font-variation-settings: 'wght' 300;">search_off</span>
+                        </div>
+                        <!-- Title -->
+                        <h2 class="text-[22px] font-bold text-primary mb-2 font-headline tracking-tight">ไม่พบภาพผิวหนัง</h2>
+                        <p class="text-on-surface-variant text-[14px] leading-relaxed max-w-sm mx-auto mb-6">
+                            ${data.reason || 'ดูเหมือนภาพที่อัปโหลดไม่ใช่ภาพถ่ายผิวหนัง'}<br>กรุณาอัปโหลดภาพผิวหนังเพื่อเริ่มการวิเคราะห์
+                        </p>
+
+                        <!-- Tips Box -->
+                        <div class="bg-primary-fixed/10 rounded-xl p-5 text-left mb-6">
+                            <div class="text-sm font-bold text-primary mb-3 flex items-center gap-2">
+                                <span class="material-symbols-outlined text-[18px]">photo_camera</span>
+                                เคล็ดลับการถ่ายภาพที่ดี
+                            </div>
+                            <div class="space-y-2">
+                                <div class="flex items-center gap-2.5 text-[13px] text-on-surface-variant">
+                                    <span class="material-symbols-outlined text-secondary text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    ถ่ายภาพผิวหนังโดยตรง ในระยะ 10-15 ซม.
+                                </div>
+                                <div class="flex items-center gap-2.5 text-[13px] text-on-surface-variant">
+                                    <span class="material-symbols-outlined text-secondary text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    ใช้แสงสว่างเพียงพอ ไม่มีเงา
+                                </div>
+                                <div class="flex items-center gap-2.5 text-[13px] text-on-surface-variant">
+                                    <span class="material-symbols-outlined text-secondary text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    เน้นบริเวณที่ต้องการวิเคราะห์ให้ชัดเจน
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Examples -->
+                        <div class="grid grid-cols-2 gap-3 mb-6">
+                            <div class="bg-surface-container-low rounded-lg p-3">
+                                <div class="text-xs font-bold text-on-surface-variant/60 mb-2">❌ ตัวอย่างที่ไม่ถูกต้อง</div>
+                                <div class="flex justify-center gap-2">
+                                    <span class="w-10 h-10 bg-surface-container-high rounded-lg flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-on-surface-variant/40 text-xl">landscape</span>
+                                    </span>
+                                    <span class="w-10 h-10 bg-surface-container-high rounded-lg flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-on-surface-variant/40 text-xl">face</span>
+                                    </span>
+                                    <span class="w-10 h-10 bg-surface-container-high rounded-lg flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-on-surface-variant/40 text-xl">restaurant</span>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="bg-secondary-container/20 rounded-lg p-3">
+                                <div class="text-xs font-bold text-secondary mb-2">✅ ตัวอย่างที่ถูกต้อง</div>
+                                <div class="flex justify-center gap-2">
+                                    <span class="w-10 h-10 bg-secondary-container/30 rounded-lg flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-secondary text-xl" style="font-variation-settings: 'FILL' 1;">dermatology</span>
+                                    </span>
+                                    <span class="w-10 h-10 bg-secondary-container/30 rounded-lg flex items-center justify-center">
+                                        <span class="material-symbols-outlined text-secondary text-xl">zoom_in</span>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <button onclick="resetUpload()" class="primary-gradient w-full max-w-xs py-4 px-8 rounded-full text-white font-bold text-[15px] shadow-lg shadow-primary/15 hover:shadow-primary/25 active:scale-[0.98] transition-all">
+                            อัปโหลดภาพใหม่
+                        </button>
+                        <div class="mt-3">
+                            <button onclick="resetUpload(); setTimeout(()=>openCameraScanner(), 200);" class="text-primary text-sm font-semibold hover:underline flex items-center gap-1.5 mx-auto">
+                                <span class="material-symbols-outlined text-[16px]">photo_camera</span>
+                                ใช้กล้องถ่ายภาพ
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+                resultsDiv.style.display = 'block';
+                resultsDiv.scrollIntoView({behavior:'smooth'});
+                return;
+            }
+
+            if (data.error) { alert('Error: ' + data.error); return; }
+
+            clearInterval(stepInterval);
+            steps.forEach(s => { document.getElementById(s).classList.remove('active'); document.getElementById(s).classList.add('done'); });
+
+            // ── No Lesion Found ──
+            if (data.no_lesion_found) {
+                const segPrev = document.getElementById('segPreview');
+                segPrev.style.display = 'none';
+                const resultsDiv = document.getElementById('results');
+                resultsDiv.innerHTML = `
+                <div class="animate-fade-in mt-8 max-w-2xl mx-auto">
+                    <div class="bg-surface-container-lowest rounded-2xl p-12 text-center" style="box-shadow: 0 20px 40px rgba(0,75,93,0.06);">
+                        <!-- Success Icon -->
+                        <div class="w-20 h-20 mx-auto mb-6 bg-emerald-50 rounded-full flex items-center justify-center">
+                            <span class="material-symbols-outlined text-emerald-500 text-5xl" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                        </div>
+
+                        <!-- Title -->
+                        <h2 class="text-[28px] font-extrabold text-emerald-600 mb-2 font-headline tracking-tight">ไม่พบรอยโรคผิวหนัง</h2>
+                        <p class="text-on-surface-variant text-[15px] leading-relaxed max-w-md mx-auto mb-8">
+                            AI ตรวจไม่พบรอยโรคที่เข้าข่ายกลุ่มโรคผิวหนังใดๆ
+                        </p>
+
+                        <!-- Scanned Categories -->
+                        <div class="bg-surface-container-low rounded-xl p-6 mb-6 text-left">
+                            <div class="flex items-center gap-2 mb-4">
+                                <span class="material-symbols-outlined text-primary text-xl" style="font-variation-settings: 'FILL' 1;">verified_user</span>
+                                <span class="text-sm font-bold text-primary">ตรวจแล้ว 5 กลุ่มโรค</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div class="flex items-center gap-2 px-3 py-2.5 bg-emerald-50 rounded-lg">
+                                    <span class="material-symbols-outlined text-emerald-500 text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    <span class="text-[13px] text-emerald-800 font-medium">Melanoma</span>
+                                </div>
+                                <div class="flex items-center gap-2 px-3 py-2.5 bg-emerald-50 rounded-lg">
+                                    <span class="material-symbols-outlined text-emerald-500 text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    <span class="text-[13px] text-emerald-800 font-medium">Basal Cell Carcinoma</span>
+                                </div>
+                                <div class="flex items-center gap-2 px-3 py-2.5 bg-emerald-50 rounded-lg">
+                                    <span class="material-symbols-outlined text-emerald-500 text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    <span class="text-[13px] text-emerald-800 font-medium">Actinic Keratoses</span>
+                                </div>
+                                <div class="flex items-center gap-2 px-3 py-2.5 bg-emerald-50 rounded-lg">
+                                    <span class="material-symbols-outlined text-emerald-500 text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    <span class="text-[13px] text-emerald-800 font-medium">Dermatofibroma</span>
+                                </div>
+                                <div class="flex items-center gap-2 px-3 py-2.5 bg-emerald-50 rounded-lg col-span-2 justify-center">
+                                    <span class="material-symbols-outlined text-emerald-500 text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+                                    <span class="text-[13px] text-emerald-800 font-medium">Melanocytic Nevi (ไฝ)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Disclaimer -->
+                        <div class="bg-primary-fixed/10 rounded-xl p-4 flex items-start gap-3 text-left mb-8">
+                            <span class="material-symbols-outlined text-primary mt-0.5 text-xl" style="font-variation-settings: 'FILL' 1;">info</span>
+                            <p class="text-[13px] text-on-surface-variant leading-relaxed">
+                                ผลการวิเคราะห์นี้เป็นเพียงการคัดกรองเบื้องต้น ไม่สามารถใช้แทนการวินิจฉัยจากแพทย์ หากมีข้อกังวล กรุณาปรึกษาแพทย์ผิวหนัง
+                            </p>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="flex items-center justify-center gap-4 flex-wrap">
+                            <button onclick="resetUpload()" class="primary-gradient py-3.5 px-8 rounded-full text-white font-bold text-[14px] shadow-lg shadow-primary/15 hover:shadow-primary/25 active:scale-[0.98] transition-all">
+                                วิเคราะห์ภาพใหม่
+                            </button>
+                            <button onclick="document.getElementById('segPreview').scrollIntoView({behavior:'smooth'})" class="py-3.5 px-8 rounded-full font-bold text-[14px] text-primary bg-transparent hover:bg-surface-container-low transition-all" style="border: 1.5px solid rgba(191,200,205,0.3);">
+                                ดูรายละเอียดเพิ่มเติม
+                            </button>
+                        </div>
+                    </div>
+                </div>`;
+                resultsDiv.style.display = 'block';
+                resultsDiv.scrollIntoView({behavior:'smooth'});
+                return;
+            }
+
+            // ── Show Segmentation ──
+            if (data.seg_image) {
+                document.getElementById('segImg').style.display = '';
+                document.getElementById('segImg').src = 'data:image/jpeg;base64,' + data.seg_image;
+                document.getElementById('segInfo').textContent = `ตัดรอยโรคขนาด ${data.seg_bbox || '?'} จากภาพต้นฉบับ`;
+                document.getElementById('segPreview').style.display = 'block';
+            }
+
+            await new Promise(r => setTimeout(r, 400));
+            showResults(data);
+        } catch (err) {
+            alert('เกิดข้อผิดพลาด: ' + err.message);
+        } finally {
+            loading.classList.remove('show');
+            steps.forEach(s => document.getElementById(s).classList.remove('active','done'));
+            btn.disabled = false;
+        }
+    }
+
+    function showResults(data) {
+        if (data.no_lesion_found) return;
+        const resultsDiv = document.getElementById('results');
+
+        const confBgMap = {
+            'critical': 'bg-error-container text-on-error-container',
+            'high': 'bg-orange-100 text-orange-800',
+            'low': 'bg-secondary-container text-on-secondary-container',
+            'none': 'bg-primary-container text-on-primary-container'
+        };
+        const riskClasses = confBgMap[data.risk || 'none'] || confBgMap['none'];
+        const riskIcon = (data.risk === 'critical' || data.risk === 'high') ? 'warning' : 'verified_user';
+
+        let warningsHtml = '';
+        if (data.warnings && data.warnings.length > 0) {
+            warningsHtml = `<div class="mb-6 p-4 bg-[#FFFBEB] border border-[#FEF3C7] rounded-xl">
+                ${data.warnings.map(w => `<div class="text-[#92400E] text-sm flex items-center gap-2 mb-1">
+                    <span class="material-symbols-outlined text-[18px]">warning</span> ${w}
+                </div>`).join('')}
+            </div>`;
+        }
+
+        let uncertainHtml = '';
+        if (data.is_uncertain) {
+            uncertainHtml = `<div class="mb-6 p-4 bg-error-container border border-error-container rounded-xl text-center">
+                <span class="material-symbols-outlined text-error text-3xl mb-2">help_center</span>
+                <div class="text-error font-bold">ผลไม่แน่นอน</div>
+                <div class="text-on-error-container opacity-80 text-sm mt-1">โมเดลไม่มั่นใจ — <strong>กรุณาปรึกษาแพทย์</strong></div>
+            </div>`;
+        }
+
+        // Recommendations
+        let recsHtml = '';
+        if (data.recommendations && data.recommendations.length > 0) {
+            const recsItems = data.recommendations.map(r => {
+                const isWarning = r.startsWith('⚠️');
+                const isDanger = r.startsWith('🚨');
+                const bgClass = isDanger ? 'bg-error-container' : (isWarning ? 'bg-orange-100' : 'bg-surface-container-low');
+                const textClass = isDanger ? 'text-on-error-container' : (isWarning ? 'text-orange-900' : 'text-on-surface');
+                const iconColor = isDanger ? 'text-error' : (isWarning ? 'text-orange-600' : 'text-primary');
+                const iconName = isDanger ? 'alarm' : (isWarning ? 'warning' : 'check_circle');
+                const cleanText = r.replace('⚠️', '').replace('🚨', '').trim();
+                return `
+                <div class="flex items-start gap-4 p-4 ${bgClass} rounded-xl border border-outline-variant/30 transition-all hover:bg-surface-container-lowest hover:shadow-md group">
+                    <div class="w-10 h-10 rounded-lg bg-white/50 flex items-center justify-center shrink-0 shadow-sm border border-black/5">
+                        <span class="material-symbols-outlined ${iconColor}" style="font-variation-settings: 'FILL' 1;">${iconName}</span>
+                    </div>
+                    <div class="flex-1 mt-0.5">
+                        <p class="text-sm font-semibold ${textClass}">${cleanText}</p>
+                    </div>
+                </div>`;
+            }).join('');
+            recsHtml = `<section class="space-y-4">
+                <h2 class="text-2xl font-bold font-headline mt-8">คำแนะนำทางคลินิก (Clinical Recommendations)</h2>
+                <div class="space-y-3">${recsItems}</div>
+            </section>`;
+        }
+
+        // Probability Bars
+        let barsHtml = '';
+        if (data.all_results && data.all_results.length > 0) {
+            data.all_results.forEach((r, idx) => {
+                const barColor = idx === 0 ? r.color : (idx < 3 ? r.color : '#888');
+                barsHtml += `
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center text-sm font-semibold">
+                        <span class="text-on-surface-variant">${r.name_th} <span class="text-xs opacity-60 font-normal">(${r.name_en})</span></span>
+                        <span class="font-bold" style="color: ${barColor}">${r.percentage}</span>
+                    </div>
+                    <div class="w-full h-2 bg-surface-container rounded-full overflow-hidden">
+                        <div class="h-full prob-bar rounded-full" style="background: ${barColor}; width: 0%;" data-width="${r.percentage}"></div>
+                    </div>
+                </div>`;
+            });
+        }
+
+        resultsDiv.innerHTML = `
+        <div class="animate-fade-in lg:flex lg:gap-12 mt-8">
+            <!-- Left Column -->
+            <div class="lg:w-7/12 space-y-10">
+                ${uncertainHtml}
+                ${warningsHtml}
+                <!-- Diagnosis Header -->
+                <section>
+                    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                        <div>
+                            <span class="text-primary font-bold tracking-widest text-xs uppercase mb-2 block">AI Analysis Result</span>
+                            <h1 class="text-4xl md:text-5xl font-extrabold text-on-surface tracking-tight font-headline" style="color: ${data.color}">
+                                ${data.name_th}
+                            </h1>
+                            <p class="text-xl text-on-surface-variant font-medium mt-1">${data.name_en}</p>
+                        </div>
+                        <div class="flex items-center">
+                            <div class="${riskClasses} px-4 py-2 rounded-xl flex items-center gap-2 shadow-sm border border-black/5">
+                                <span class="material-symbols-outlined text-lg" style="font-variation-settings: 'FILL' 1;">${riskIcon}</span>
+                                <span class="font-bold text-sm">มั่นใจ ${data.confidence_pct}</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <!-- Clinical Description -->
+                <section class="space-y-4">
+                    <h2 class="text-2xl font-bold font-headline">ข้อมูลทางการแพทย์ (Clinical Insights)</h2>
+                    <div class="bg-surface-container-lowest p-8 rounded-2xl shadow-[0_12px_32px_rgba(0,103,124,0.04)] border border-outline-variant/10">
+                        <p class="text-on-surface-variant leading-relaxed text-[15px]">
+                            ${data.description ? data.description.replace(/\\n/g, '<br>') : ''}
+                        </p>
+                        <div class="mt-6 pt-4 border-t border-outline-variant/20 flex gap-3 text-sm">
+                            <span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">info</span>
+                            <p class="text-on-surface-variant leading-relaxed italic">${data.advice}</p>
+                        </div>
+                    </div>
+                </section>
+                ${recsHtml}
+            </div>
+            <!-- Right Column: Probability -->
+            <div class="lg:w-5/12 mt-12 lg:mt-0 space-y-8">
+                <section class="bg-surface-container-high/40 p-8 rounded-3xl border border-surface-container-highest shadow-inner">
+                    <h2 class="text-xl font-bold font-headline mb-8 flex items-center gap-2">
+                        <span class="material-symbols-outlined text-primary">bar_chart</span>
+                        ความน่าจะเป็นทุกกลุ่มโรค
+                    </h2>
+                    <div class="space-y-6">${barsHtml}</div>
+                    <div class="mt-8 pt-4 border-t border-outline-variant/20 text-center text-xs text-on-surface-variant flex items-center justify-center gap-2 font-mono">
+                        <span class="material-symbols-outlined text-[16px]">timer</span>
+                        ใช้เวลาประมวลผล ${data.elapsed_ms} ms
+                    </div>
+                </section>
+            </div>
+        </div>`;
+
+        resultsDiv.style.display = 'block';
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                document.querySelectorAll('.prob-bar').forEach(bar => {
+                    bar.style.transition = 'width 1s cubic-bezier(0.4, 0, 0.2, 1)';
+                    bar.style.width = bar.dataset.width;
+                });
+            }, 100);
+        });
+        resultsDiv.scrollIntoView({behavior:'smooth', block:'start'});
+    }
+</script>
+
+<!-- Camera Scanner -->
+<div class="camera-scanner" id="cameraScanner">
+    <video id="cameraVideo" playsinline autoplay muted></video>
+    <canvas id="cameraCanvas" style="display:none;"></canvas>
+    <div class="camera-overlay">
+        <div class="camera-top-bar">
+            <button onclick="closeCameraScanner()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                ปิด
+            </button>
+            <div class="camera-top-title">Skin Scanner</div>
+            <button onclick="switchCamera()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                สลับ
+            </button>
+        </div>
+        <div class="camera-indicators">
+            <div class="cam-indicator neutral" id="indLight">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                <span>แสง</span>
+            </div>
+            <div class="cam-indicator neutral" id="indSkin">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <span>ผิวหนัง</span>
+            </div>
+        </div>
+        <div class="camera-frame-area">
+            <div class="scan-frame" id="scanFrame">
+                <div class="corner tl"></div>
+                <div class="corner tr"></div>
+                <div class="corner bl"></div>
+                <div class="corner br"></div>
+                <div class="scan-line"></div>
+                <div class="scan-label" id="scanLabel">วางผิวหนังในกรอบนี้</div>
+            </div>
+        </div>
+        <div class="camera-bottom">
+            <button class="capture-btn" id="captureBtn" disabled onclick="capturePhoto()"></button>
+            <div class="camera-hint" id="cameraHint">วางผิวหนังในกรอบเพื่อถ่ายภาพ</div>
+        </div>
+    </div>
+</div>
+<div class="camera-flash" id="cameraFlash"></div>
+
+<!-- ═══ Camera Scanner Script ═══ -->
+<script>
+    let cameraStream = null;
+    let scanInterval = null;
+    let useFrontCamera = false;
+
+    async function openCameraScanner() {
+        const scanner = document.getElementById('cameraScanner');
+        scanner.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        try {
+            await startCamera();
+        } catch (err) {
+            alert('ไม่สามารถเปิดกล้องได้: ' + err.message + '\n\nกรุณาอนุญาตการเข้าถึงกล้อง');
+            closeCameraScanner();
+        }
+    }
+
+    async function startCamera() {
+        if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); }
+        const constraints = {
+            video: { facingMode: useFrontCamera ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+        };
+        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const video = document.getElementById('cameraVideo');
+        video.srcObject = cameraStream;
+        await video.play();
+        startSkinDetection();
+    }
+
+    function closeCameraScanner() {
+        const scanner = document.getElementById('cameraScanner');
+        scanner.classList.remove('active');
+        document.body.style.overflow = '';
+        if (scanInterval) { clearInterval(scanInterval); scanInterval = null; }
+        if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+    }
+
+    async function switchCamera() {
+        useFrontCamera = !useFrontCamera;
+        try { await startCamera(); } catch (e) { useFrontCamera = !useFrontCamera; await startCamera(); }
+    }
+
+    function startSkinDetection() {
+        if (scanInterval) clearInterval(scanInterval);
+        const video = document.getElementById('cameraVideo');
+        const canvas = document.getElementById('cameraCanvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        let isValidating = false;
+
+        scanInterval = setInterval(async () => {
+            if (video.readyState < 2 || isValidating) return;
+            isValidating = true;
+            try {
+                const sw = 128, sh = 128;
+                canvas.width = sw; canvas.height = sh;
+                const vw = video.videoWidth, vh = video.videoHeight;
+                const cropSize = Math.min(vw, vh) * 0.35;
+                const sx = (vw - cropSize) / 2, sy = (vh - cropSize) / 2;
+                ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, sw, sh);
+
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.6));
+                const formData = new FormData();
+                formData.append('file', blob, 'frame.jpg');
+                const resp = await fetch('/api/validate-frame', { method: 'POST', body: formData });
+                const data = await resp.json();
+
+                const indLight = document.getElementById('indLight');
+                const indSkin = document.getElementById('indSkin');
+                const scanFrame = document.getElementById('scanFrame');
+                const captureBtn = document.getElementById('captureBtn');
+                const scanLabel = document.getElementById('scanLabel');
+                const cameraHint = document.getElementById('cameraHint');
+                const checks = data.checks || {};
+
+                indLight.className = 'cam-indicator ' + (checks.sharp_ok ? 'good' : 'bad');
+                indLight.querySelector('span').textContent = checks.sharp_ok ? '✓ โฟกัส' : '✗ ไม่ชัด';
+
+                indSkin.className = 'cam-indicator ' + (data.valid ? 'good' : 'bad');
+                if (data.valid) { indSkin.querySelector('span').textContent = '✓ ผิวหนัง'; }
+                else if (!checks.skin_ok) { indSkin.querySelector('span').textContent = `✗ ผิวหนัง ${Math.round((checks.skin_ratio||0)*100)}%`; }
+                else if (!checks.uniform_ok || !checks.spread_ok) { indSkin.querySelector('span').textContent = '✗ เห็นใบหน้า'; }
+                else if (!checks.edge_ok) { indSkin.querySelector('span').textContent = '✗ ซูมอีก'; }
+                else if (!checks.dark_ok) { indSkin.querySelector('span').textContent = '✗ มีส่วนมืด'; }
+                else { indSkin.querySelector('span').textContent = '✗ ปรับตำแหน่ง'; }
+
+                scanFrame.className = 'scan-frame' + (data.valid ? ' detected' : '');
+                captureBtn.disabled = !data.valid;
+                captureBtn.className = 'capture-btn' + (data.valid ? ' ready' : '');
+                scanLabel.textContent = data.hint || 'วางผิวหนังในกรอบ';
+                cameraHint.textContent = data.hint_detail || 'ซูมกล้องให้ชิดผิวหนัง';
+            } catch (err) { console.warn('Validate frame error:', err); }
+            finally { isValidating = false; }
+        }, 1200);
+    }
+
+    function capturePhoto() {
+        const video = document.getElementById('cameraVideo');
+        const canvas = document.getElementById('cameraCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const flash = document.getElementById('cameraFlash');
+        flash.classList.add('flash');
+        setTimeout(() => flash.classList.remove('flash'), 200);
+
+        const vw = video.videoWidth, vh = video.videoHeight;
+        const cropSize = Math.min(vw, vh) * 0.35;
+        const sx = (vw - cropSize) / 2, sy = (vh - cropSize) / 2;
+        const outputSize = Math.min(720, Math.round(cropSize));
+        canvas.width = outputSize; canvas.height = outputSize;
+        ctx.drawImage(video, sx, sy, cropSize, cropSize, 0, 0, outputSize, outputSize);
+
+        canvas.toBlob((blob) => {
+            const file = new File([blob], 'camera_capture.jpg', { type: 'image/jpeg' });
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('previewImg').src = e.target.result;
+                document.getElementById('previewContainer').style.display = 'block';
+                document.getElementById('inputGrid').style.display = 'none';
+                document.getElementById('analyzeSection').style.display = 'flex';
+                document.getElementById('results').style.display = 'none';
+                document.getElementById('segPreview').style.display = 'none';
+                window._capturedFile = file;
+                selectedFile = null;
+            };
+            reader.readAsDataURL(blob);
+            closeCameraScanner();
+        }, 'image/jpeg', 0.92);
+    }
+</script>
+
+</body>
+</html>

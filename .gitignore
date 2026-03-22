@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# Model weights (too large for git)
+models/**/*.safetensors
+models/**/*.pt
+models/**/*.bin
+model_seekwell_v2/
+
+# Training data (too large for git)
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent
+.agent/
+.gemini/
+
+# Misc
+*.log
+*.tmp
+IMG/

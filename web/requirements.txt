@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+torch
+torchvision
+transformers
+numpy
+Pillow
+jinja2
+safetensors
