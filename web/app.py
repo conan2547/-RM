@@ -723,7 +723,7 @@ def validate_camera_frame(img: Image.Image) -> dict:
     skin_mask = (y > 60) & (cb > 77) & (cb < 127) & (cr > 133) & (cr < 173)
     skin_ratio = float(np.mean(skin_mask))
     checks["skin_ratio"] = round(skin_ratio, 3)
-    checks["skin_ok"] = skin_ratio > 0.70
+    checks["skin_ok"] = skin_ratio > 0.40
     
     # ── Check 2: Spatial Uniformity (Grid Variance) ──
     # แบ่งภาพเป็น 4x4 grid ตรวจว่า brightness สม่ำเสมอ
@@ -770,16 +770,8 @@ def validate_camera_frame(img: Image.Image) -> dict:
     checks["sharp_ok"] = lap_var > 3.0  # ต้อง focus ชัด
     
     # ── Final Decision ──
-    pass_count = sum([
-        checks["skin_ok"],
-        checks["uniform_ok"], 
-        checks["spread_ok"],
-        checks["edge_ok"],
-        checks["dark_ok"],
-    ])
-    
-    # ต้องผ่านอย่างน้อย 4 จาก 5 ด่าน
-    is_valid = pass_count >= 4 and checks["skin_ok"]  # skin_ok บังคับผ่าน
+    # เช็คแค่ skin + sharpness (ไม่ต้องเช็คใบหน้า)
+    is_valid = checks["skin_ok"] and checks.get("sharp_ok", True)
     
     # สร้าง hint
     if is_valid:
@@ -787,19 +779,10 @@ def validate_camera_frame(img: Image.Image) -> dict:
         hint_detail = "กดปุ่มเพื่อถ่ายภาพ"
     elif not checks["skin_ok"]:
         hint = "🔍 ซูมให้ชิดผิวหนัง"
-        hint_detail = f"ต้องเห็นผิวหนัง >70% (ตอนนี้ {skin_ratio*100:.0f}%)"
-    elif not checks["uniform_ok"] or not checks["spread_ok"]:
-        hint = "⚠️ พบใบหน้า/วัตถุอื่น"
-        hint_detail = "ถ่ายเฉพาะผิวหนัง ไม่ใช่ใบหน้า"
-    elif not checks["edge_ok"]:
-        hint = "⚠️ ภาพมีรายละเอียดมากเกินไป"
-        hint_detail = "ซูมให้ใกล้ขึ้น เน้นเฉพาะผิวหนัง"
-    elif not checks["dark_ok"]:
-        hint = "⚠️ พบส่วนมืด (ตา/ผม)"
-        hint_detail = "เลื่อนให้เห็นเฉพาะผิวหนัง"
-    elif not checks["sharp_ok"]:
-        hint = "📷 ภาพไม่ชัด"
-        hint_detail = "ถือกล้องให้นิ่ง รอโฟกัส"
+        hint_detail = f"ต้องเห็นผิวหนัง >40% (ตอนนี้ {skin_ratio*100:.0f}%)"
+    elif not checks.get("sharp_ok", True):
+        hint = "⚠️ ภาพไม่ชัด"
+        hint_detail = "กรุณาถ่ายให้ชัดและอยู่นิ่ง"
     else:
         hint = "🔍 ปรับตำแหน่ง"
         hint_detail = "วางผิวหนังให้อยู่ในกรอบ"
@@ -808,7 +791,6 @@ def validate_camera_frame(img: Image.Image) -> dict:
         "valid": is_valid,
         "hint": hint,
         "hint_detail": hint_detail,
-        "pass_count": pass_count,
         "checks": checks,
     }
 
