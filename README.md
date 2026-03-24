@@ -1,3 +1,13 @@
+---
+title: Skin Cancer Detection
+emoji: 🔬
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 🔬 AI for Skin Cancer Detection
 
 ระบบตรวจสอบโรคผิวหนังด้วย AI โดยใช้ Vision Transformer (ViT) สำหรับจำแนกรอยโรคผิวหนัง 6 ประเภท
