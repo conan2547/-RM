@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user (HF Spaces requirement) — ต้องสร้างก่อน
+# Create non-root user (HF Spaces requirement)
 RUN useradd -m -u 1000 user
 
 # Copy requirements and install Python dependencies
@@ -24,14 +24,17 @@ RUN mkdir -p /home/user/.cache/huggingface && \
 
 USER user
 
-# Set environment variables
+# Set environment variables — optimize for low memory
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH \
     TRANSFORMERS_CACHE=/home/user/.cache/huggingface \
-    HF_HOME=/home/user/.cache/huggingface
+    HF_HOME=/home/user/.cache/huggingface \
+    PYTORCH_NO_CUDA_MEMORY_CACHING=1 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1
 
 # Expose port 7860 (HF Spaces default)
 EXPOSE 7860
 
 # Run the app on port 7860
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860", "--timeout-keep-alive", "120"]
