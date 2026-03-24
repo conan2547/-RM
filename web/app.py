@@ -144,7 +144,7 @@ CLASS_INFO = {
 # ─── Load ViT Model ────────────────────────────────────────
 print("=" * 65)
 print("  🧬 ViT Skin Cancer Scanner v8")
-print(f"  📊 5 Display Classes | seekwell_skincancer_v2 (6-class model, ACK excluded)")
+print(f"  📊 6 Classes | seekwell_skincancer_v2")
 print("=" * 65)
 
 # Device
@@ -307,15 +307,15 @@ def predict(image_bytes: bytes):
 
 # ─── Skin Validation ────────────────────────────────────────
 def validate_skin_image(img: Image.Image) -> dict:
-    """ตรวจว่าภาพเป็นภาพถ่ายผิวหนังที่ชัดเจนหรือไม่ (เข้มงวด)"""
+    """ตรวจว่าภาพเป็นภาพถ่ายผิวหนังหรือไม่"""
     w, h = img.size
     
-    # 1. ขนาดเล็กเกินไป — ต้อง >= 100x100
-    if w < 100 or h < 100:
-        return {"valid": False, "reason": "ภาพเล็กเกินไป กรุณาใช้ภาพที่ใหญ่กว่า 100x100 px"}
+    # 1. ขนาดเล็กเกินไป
+    if w < 50 or h < 50:
+        return {"valid": False, "reason": "ภาพเล็กเกินไป กรุณาใช้ภาพที่ใหญ่กว่า 50x50 px"}
     
     # 2. ตรวจสัดส่วนสีผิว (skin color detection)
-    img_small = img.resize((128, 128))
+    img_small = img.resize((100, 100))
     arr = np.array(img_small, dtype=np.float32)
     
     if len(arr.shape) < 3 or arr.shape[2] < 3:
@@ -324,14 +324,14 @@ def validate_skin_image(img: Image.Image) -> dict:
     r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
     
     # Skin color detection using multiple rules
-    # Rule 1: RGB range for diverse skin tones
+    # Rule 1: RGB range for skin tones
     skin_r = (r > 50) & (r < 255)
     skin_g = (g > 30) & (g < 230)
     skin_b = (b > 15) & (b < 210)
-    skin_rg = (r > g) & (r > b)
+    skin_rg = (r > g) & (r > b)  # Red channel dominant
     skin_mask1 = skin_r & skin_g & skin_b & skin_rg
     
-    # Rule 2: YCbCr color space
+    # Rule 2: YCbCr color space (ดีกว่าสำหรับตรวจสีผิว)
     y = 0.299 * r + 0.587 * g + 0.114 * b
     cb = 128 - 0.169 * r - 0.331 * g + 0.500 * b
     cr = 128 + 0.500 * r - 0.419 * g - 0.081 * b
@@ -340,76 +340,27 @@ def validate_skin_image(img: Image.Image) -> dict:
     skin_mask = skin_mask1 | skin_mask2
     skin_ratio = float(np.mean(skin_mask))
     
-    # 3. ตรวจความชัด (Sharpness) — ใช้ Laplacian variance
+    # 3. ตรวจ entropy — ภาพ screenshot/ข้อความจะมี std ต่ำมาก
     gray = np.mean(arr, axis=2)
-    # Laplacian approximation
-    from scipy.ndimage import laplace, sobel
-    lap = laplace(gray)
-    sharpness = float(np.var(lap))
-    
-    # 4. ตรวจ edge density — ภาพที่มีเส้นขอบเยอะ (ข้อความ, วัตถุ, screenshot) จะถูก reject
-    edge_x = sobel(gray, axis=0)
-    edge_y = sobel(gray, axis=1)
-    edge_mag = np.sqrt(edge_x**2 + edge_y**2)
-    edge_threshold = np.mean(edge_mag) + 1.5 * np.std(edge_mag)
-    edge_ratio = float(np.mean(edge_mag > edge_threshold))
-    
-    # 5. ตรวจ entropy — ภาพ screenshot/ข้อความจะมี std ต่ำมาก
     std_val = float(np.std(gray))
     
-    # 6. ตรวจว่ามีเนื้อหาเพียงพอ (ไม่ใช่ภาพขาว/ดำทั้งหมด)
-    mean_brightness = float(np.mean(gray))
-    
-    # ─── ตัดสิน (เข้มงวด ≥80% skin + ห้าม edge เยอะ) ───
-    
-    # สีผิวน้อยเกินไป (ต้อง ≥80%)
-    if skin_ratio < 0.80:
+    # 4. ตัดสิน
+    if skin_ratio < 0.08:
         return {
             "valid": False, 
-            "reason": f"ภาพนี้มีสีผิวหนังเพียง {skin_ratio*100:.0f}% (ต้อง ≥80%) กรุณาถ่ายภาพผิวหนังให้ชัดเจนและเต็มเฟรม",
+            "reason": "ไม่พบสีผิวหนังในภาพ กรุณาถ่ายภาพผิวหนังโดยตรง",
             "skin_ratio": f"{skin_ratio*100:.0f}%"
         }
     
-    # มีเส้นขอบเยอะเกินไป (ข้อความ, วัตถุ, หลายสิ่ง)
-    if edge_ratio > 0.25:
+    if std_val < 5:
         return {
             "valid": False,
-            "reason": f"ภาพมีรายละเอียด/เส้นขอบมากเกินไป ({edge_ratio*100:.0f}%) กรุณาถ่ายเฉพาะผิวหนัง ไม่ใช่ภาพที่มีข้อความ วัตถุ หรือฉากหลัง",
-            "edge_ratio": f"{edge_ratio*100:.0f}%"
-        }
-    
-    # ภาพไม่ชัด
-    if sharpness < 30:
-        return {
-            "valid": False,
-            "reason": f"ภาพไม่ชัดเพียงพอ กรุณาถ่ายภาพให้ชัดและอยู่นิ่ง",
-            "sharpness": f"{sharpness:.1f}"
-        }
-    
-    # ภาพสีเดียว
-    if std_val < 12:
-        return {
-            "valid": False,
-            "reason": "ภาพดูเหมือนสีเดียวกันทั้งหมด กรุณาใช้ภาพถ่ายจริงของผิวหนัง"
-        }
-    
-    # สว่างหรือมืดเกินไป
-    if mean_brightness < 30:
-        return {
-            "valid": False,
-            "reason": "ภาพมืดเกินไป กรุณาถ่ายในที่มีแสงเพียงพอ"
-        }
-    if mean_brightness > 245:
-        return {
-            "valid": False,
-            "reason": "ภาพสว่างเกินไป กรุณาลดความสว่างหรือหลีกเลี่ยงแสงจ้า"
+            "reason": "ภาพดูเป็นสีเดียว กรุณาใช้ภาพถ่ายจริง"
         }
     
     return {
         "valid": True, 
         "skin_ratio": f"{skin_ratio*100:.0f}%",
-        "edge_ratio": f"{edge_ratio*100:.0f}%",
-        "sharpness": f"{sharpness:.1f}",
         "std": f"{std_val:.1f}"
     }
 
@@ -695,122 +646,236 @@ static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
-# ─── Real-time Camera Frame Validation ─────────────────────
+# ─── Real-time Camera Frame Validation (UNet-based) ────────
 def validate_camera_frame(img: Image.Image) -> dict:
     """
-    ตรวจเฟรมกล้องว่าเป็นภาพผิวหนัง close-up จริงหรือไม่
-    ใช้ 5 เทคนิค Computer Vision:
-    1. Skin Color (YCbCr) — ผิวหนังต้อง >70%
-    2. Spatial Uniformity — แบ่ง grid ตรวจกระจายสม่ำเสมอ  
-    3. Edge Density — ใบหน้ามี edge เยอะ ผิว close-up มีน้อย
-    4. Dark Cluster — ตา/ผม/คิ้ว = กลุ่ม pixel มืด
-    5. Sharpness — ภาพต้อง focus ชัด
+    ตรวจเฟรมกล้องด้วย UNet Segmentation แบบ real-time
+    ถ้าเจอรอยโรคผิวหนัง → อนุญาตถ่ายภาพ + ส่ง mask overlay กลับ
+    ถ้าไม่เจอ → ไม่อนุญาต
     """
-    from scipy.ndimage import uniform_filter, laplace
+    import base64
+    from scipy.ndimage import binary_dilation, binary_erosion, gaussian_filter
     
-    # Resize เล็กเพื่อความเร็ว
-    img_small = img.resize((128, 128))
-    arr = np.array(img_small, dtype=np.float32)
-    r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
-    gray = (0.299 * r + 0.587 * g + 0.114 * b)
+    if not unet_seg_available:
+        return {
+            "valid": True,
+            "hint": "✅ พร้อมถ่ายภาพ",
+            "hint_detail": "กดปุ่มเพื่อถ่ายภาพ",
+            "lesion_found": True,
+            "unet_confidence": 0,
+            "mask_overlay": None,
+            "checks": {"lesion_found": True, "unet_ready": False},
+        }
     
-    checks = {}
-    
-    # ── Check 1: Skin Color Ratio (YCbCr) ──
-    y  = 0.299 * r + 0.587 * g + 0.114 * b
-    cb = 128 - 0.169 * r - 0.331 * g + 0.500 * b
-    cr = 128 + 0.500 * r - 0.419 * g - 0.081 * b
-    skin_mask = (y > 60) & (cb > 77) & (cb < 127) & (cr > 133) & (cr < 173)
-    skin_ratio = float(np.mean(skin_mask))
-    checks["skin_ratio"] = round(skin_ratio, 3)
-    checks["skin_ok"] = skin_ratio > 0.70
-    
-    # ── Check 2: Spatial Uniformity (Grid Variance) ──
-    # แบ่งภาพเป็น 4x4 grid ตรวจว่า brightness สม่ำเสมอ
-    # ผิว close-up: ทุก cell มี mean brightness ใกล้กัน
-    # ใบหน้า: cell ตา/ผม มืด, cell หน้าผาก สว่าง
-    grid_size = 4
-    cell_h, cell_w = 128 // grid_size, 128 // grid_size
-    cell_means = []
-    cell_skin_ratios = []
-    for gy in range(grid_size):
-        for gx in range(grid_size):
-            cell = gray[gy*cell_h:(gy+1)*cell_h, gx*cell_w:(gx+1)*cell_w]
-            cell_means.append(float(np.mean(cell)))
-            cell_skin = skin_mask[gy*cell_h:(gy+1)*cell_h, gx*cell_w:(gx+1)*cell_w]
-            cell_skin_ratios.append(float(np.mean(cell_skin)))
-    
-    grid_std = float(np.std(cell_means))
-    # ผิวซูมชัด: std < 18, ใบหน้า/วัตถุ: std > 18
-    checks["grid_std"] = round(grid_std, 2)
-    checks["uniform_ok"] = grid_std < 18
-    
-    # ตรวจว่า skin กระจายทั่วทุก cell (ไม่ใช่แค่บาง cell)
-    low_skin_cells = sum(1 for s in cell_skin_ratios if s < 0.3)
-    checks["low_skin_cells"] = low_skin_cells
-    checks["spread_ok"] = low_skin_cells <= 2  # อนุญาตไม่เกิน 2 cell ที่ skin น้อย
-    
-    # ── Check 3: Edge Density (Laplacian) ──
-    # ใบหน้ามี edge เยอะ (ตา จมูก ปาก) ผิว close-up มีน้อย
-    lap = laplace(gray.astype(np.float64))
-    edge_density = float(np.mean(np.abs(lap)))
-    checks["edge_density"] = round(edge_density, 2)
-    checks["edge_ok"] = edge_density < 5.0  # ผิว close-up < 5, ใบหน้า > 5
-    
-    # ── Check 4: Dark Cluster Detection ──
-    # ตรวจ pixel มืดมาก (ตา, ผม, คิ้ว)
-    dark_mask = gray < 50
-    dark_ratio = float(np.mean(dark_mask))
-    checks["dark_ratio"] = round(dark_ratio, 3)
-    checks["dark_ok"] = dark_ratio < 0.05  # ผิว close-up แทบไม่มี pixel มืด
-    
-    # ── Check 5: Sharpness (Focus Quality) ──
-    lap_var = float(np.var(lap))
-    checks["sharpness"] = round(lap_var, 2)
-    checks["sharp_ok"] = lap_var > 3.0  # ต้อง focus ชัด
-    
-    # ── Final Decision ──
-    pass_count = sum([
-        checks["skin_ok"],
-        checks["uniform_ok"], 
-        checks["spread_ok"],
-        checks["edge_ok"],
-        checks["dark_ok"],
-    ])
-    
-    # ต้องผ่านอย่างน้อย 4 จาก 5 ด่าน
-    is_valid = pass_count >= 4 and checks["skin_ok"]  # skin_ok บังคับผ่าน
-    
-    # สร้าง hint
-    if is_valid:
-        hint = "✅ พร้อมถ่ายภาพ"
-        hint_detail = "กดปุ่มเพื่อถ่ายภาพ"
-    elif not checks["skin_ok"]:
-        hint = "🔍 ซูมให้ชิดผิวหนัง"
-        hint_detail = f"ต้องเห็นผิวหนัง >70% (ตอนนี้ {skin_ratio*100:.0f}%)"
-    elif not checks["uniform_ok"] or not checks["spread_ok"]:
-        hint = "⚠️ พบใบหน้า/วัตถุอื่น"
-        hint_detail = "ถ่ายเฉพาะผิวหนัง ไม่ใช่ใบหน้า"
-    elif not checks["edge_ok"]:
-        hint = "⚠️ ภาพมีรายละเอียดมากเกินไป"
-        hint_detail = "ซูมให้ใกล้ขึ้น เน้นเฉพาะผิวหนัง"
-    elif not checks["dark_ok"]:
-        hint = "⚠️ พบส่วนมืด (ตา/ผม)"
-        hint_detail = "เลื่อนให้เห็นเฉพาะผิวหนัง"
-    elif not checks["sharp_ok"]:
-        hint = "📷 ภาพไม่ชัด"
-        hint_detail = "ถือกล้องให้นิ่ง รอโฟกัส"
-    else:
-        hint = "🔍 ปรับตำแหน่ง"
-        hint_detail = "วางผิวหนังให้อยู่ในกรอบ"
-    
-    return {
-        "valid": is_valid,
-        "hint": hint,
-        "hint_detail": hint_detail,
-        "pass_count": pass_count,
-        "checks": checks,
-    }
+    try:
+        arr = np.array(img)
+        h, w = arr.shape[:2]
+        
+        # 1. Prepare input: resize to 128x128 grayscale
+        gray = img.convert("L").resize((128, 128), Image.BILINEAR)
+        gray_arr = np.array(gray).astype(np.float32) / 255.0
+        input_tensor = torch.from_numpy(gray_arr).unsqueeze(0).unsqueeze(0)
+        input_tensor = input_tensor.to(device)
+        
+        # 2. Run UNet
+        with torch.no_grad():
+            pred = seg_unet(input_tensor)
+        
+        # 3. Analyze prediction — เข้มงวดเพื่อให้มั่นใจว่าเป็นรอยโรคจริง
+        mask_small = pred.squeeze().cpu().numpy()  # (128,128) float [0,1]
+        
+        # 3a. ใช้ threshold สูงขึ้น (0.6 แทน 0.5) เพื่อลด false positive
+        mask_binary = (mask_small > 0.6).astype(np.uint8)
+        
+        # 3b. Morphological cleanup — ลบจุด noise เล็กๆ, เติมรูเล็กๆ
+        from scipy.ndimage import binary_opening, binary_closing, label as ndlabel
+        mask_clean = binary_opening(mask_binary, iterations=2)   # ลบจุดเล็ก
+        mask_clean = binary_closing(mask_clean, iterations=2)    # เติมรูเล็ก
+        mask_binary = mask_clean.astype(np.uint8)
+        
+        # 3c. Connected Component — เอาเฉพาะก้อนใหญ่สุด
+        labeled_arr, num_features = ndlabel(mask_binary)
+        if num_features > 0:
+            # หาก้อนใหญ่สุด
+            component_sizes = [(labeled_arr == i).sum() for i in range(1, num_features + 1)]
+            largest_label = component_sizes.index(max(component_sizes)) + 1
+            mask_binary = (labeled_arr == largest_label).astype(np.uint8)
+            
+            # ถ้าก้อนใหญ่สุดเล็กเกินไป (< 50 px จาก 128x128 = 16384 px) → ถือว่าไม่เจอ
+            largest_size = max(component_sizes)
+            if largest_size < 50:
+                mask_binary = np.zeros_like(mask_binary)
+        
+        mask_ratio = float(np.mean(mask_binary))
+        confidence = float(np.mean(mask_small[mask_binary > 0])) if np.any(mask_binary) else 0.0
+        
+        # 3d. Circularity check — รอยโรคจริงค่อนข้างกลม/compact ไม่เป็นเส้นยาว
+        mask_pixels = int(np.sum(mask_binary))
+        circularity = 0.0
+        if mask_pixels > 0:
+            from scipy.ndimage import binary_dilation as bd_circ
+            dilated_circ = bd_circ(mask_binary.astype(bool), iterations=1)
+            perimeter = int(np.sum(dilated_circ.astype(np.uint8) - mask_binary))
+            if perimeter > 0:
+                circularity = (4 * 3.14159 * mask_pixels) / (perimeter * perimeter)
+            else:
+                circularity = 1.0
+        
+        # 4. Contrast check — ต้องมีความแตกต่างชัดเจน
+        gray_full = np.array(img.convert("L").resize((128, 128)))
+        inside_pixels = gray_full[mask_binary > 0]
+        outside_pixels = gray_full[mask_binary == 0]
+        
+        contrast_diff = 0.0
+        if len(inside_pixels) > 0 and len(outside_pixels) > 0:
+            contrast_diff = abs(float(np.mean(inside_pixels)) - float(np.mean(outside_pixels)))
+        
+        # 5. Skin Color Check (YCbCr) — ต้องเจอสีผิวหนังอย่างน้อย 20%
+        img_small = img.resize((128, 128))
+        arr_small = np.array(img_small, dtype=np.float32)
+        r, g, b = arr_small[:,:,0], arr_small[:,:,1], arr_small[:,:,2]
+        y_ch  = 0.299 * r + 0.587 * g + 0.114 * b
+        cb_ch = 128 - 0.169 * r - 0.331 * g + 0.500 * b
+        cr_ch = 128 + 0.500 * r - 0.419 * g - 0.081 * b
+        skin_mask = (y_ch > 60) & (cb_ch > 77) & (cb_ch < 127) & (cr_ch > 133) & (cr_ch < 173)
+        skin_ratio = float(np.mean(skin_mask))
+        skin_ok = skin_ratio >= 0.20
+        
+        # 5b. Face Detection Heuristics — กรองใบหน้าออก
+        from scipy.ndimage import sobel
+        
+        # (A) Edge density — ใบหน้ามี edge เยอะ (ตา ปาก จมูก คิ้ว), ผิวหนัง close-up มี edge น้อย
+        gray_sobel = gray_full.astype(np.float64)
+        edge_x = sobel(gray_sobel, axis=0)
+        edge_y = sobel(gray_sobel, axis=1)
+        edge_mag = np.sqrt(edge_x**2 + edge_y**2)
+        edge_density = float(np.mean(edge_mag > 25))  # สัดส่วน pixel ที่เป็น edge
+        is_face_edge = edge_density > 0.15  # ใบหน้ามี edge > 15%
+        
+        # (B) Skin spread uniformity — ใบหน้ามีผิวหนังกระจายทั่ว 4 มุม
+        skin_mask_bool = skin_mask.astype(bool)
+        q1 = float(np.mean(skin_mask_bool[:64, :64]))    # top-left
+        q2 = float(np.mean(skin_mask_bool[:64, 64:]))    # top-right
+        q3 = float(np.mean(skin_mask_bool[64:, :64]))    # bottom-left
+        q4 = float(np.mean(skin_mask_bool[64:, 64:]))    # bottom-right
+        quadrants = [q1, q2, q3, q4]
+        min_q = min(quadrants)
+        # ถ้าทุก quadrants > 15% = ผิวหนังกระจายสม่ำเสมอ (ใบหน้า)
+        is_face_spread = min_q > 0.15 and skin_ratio > 0.50
+        
+        # (C) Max skin ratio — ผิวหนัง > 80% มักเป็นใบหน้า ไม่ใช่ close-up รอยโรค
+        is_face_maxskin = skin_ratio > 0.80
+        
+        # รวม: ถ้าเจอ >= 2 signals → น่าจะเป็นใบหน้า
+        face_signals = sum([is_face_edge, is_face_spread, is_face_maxskin])
+        is_face = face_signals >= 2
+        
+        # 6. Decision — เข้มงวดทุกเงื่อนไข + ต้องไม่ใช่ใบหน้า
+        lesion_found = (
+            skin_ok and
+            not is_face and                     # ต้องไม่ใช่ใบหน้า
+            0.01 < mask_ratio < 0.75 and
+            confidence > 0.75 and
+            contrast_diff > 15 and
+            circularity > 0.15
+        )
+        
+        # 7. สร้าง Mask Overlay Image (128x128 RGBA PNG)
+        mask_overlay_b64 = None
+        if lesion_found:
+            overlay = np.zeros((128, 128, 4), dtype=np.uint8)
+            
+            mask_bool = mask_binary.astype(bool)
+            
+            # Semi-transparent fill inside lesion (cyan)
+            overlay[mask_bool, 0] = 0      # R
+            overlay[mask_bool, 1] = 220    # G
+            overlay[mask_bool, 2] = 255    # B
+            overlay[mask_bool, 3] = 35     # Alpha (very subtle fill)
+            
+            # Find contour (edge of mask)
+            dilated = binary_dilation(mask_bool, iterations=1)
+            eroded = binary_erosion(mask_bool, iterations=1)
+            contour = dilated & ~eroded  # เส้นขอบ
+            
+            # Glow effect — outer glow
+            glow_wide = binary_dilation(mask_bool, iterations=3) & ~dilated
+            overlay[glow_wide, 0] = 0
+            overlay[glow_wide, 1] = 180
+            overlay[glow_wide, 2] = 255
+            overlay[glow_wide, 3] = 50  # subtle glow
+            
+            glow_narrow = binary_dilation(mask_bool, iterations=2) & ~dilated
+            overlay[glow_narrow, 0] = 0
+            overlay[glow_narrow, 1] = 200
+            overlay[glow_narrow, 2] = 255
+            overlay[glow_narrow, 3] = 80  # brighter glow
+            
+            # Main contour line — bright cyan
+            overlay[contour, 0] = 0
+            overlay[contour, 1] = 230
+            overlay[contour, 2] = 255
+            overlay[contour, 3] = 220  # mostly opaque
+            
+            # Encode as PNG base64
+            overlay_img = Image.fromarray(overlay, 'RGBA')
+            buf_overlay = io.BytesIO()
+            overlay_img.save(buf_overlay, format='PNG')
+            mask_overlay_b64 = base64.b64encode(buf_overlay.getvalue()).decode()
+        
+        # Hints
+        if not skin_ok:
+            hint = "🔍 ไม่พบผิวหนัง"
+            hint_detail = f"ต้องเห็นผิวหนัง ≥20% (ตอนนี้ {skin_ratio*100:.0f}%)"
+        elif is_face:
+            hint = "👤 เห็นใบหน้า"
+            hint_detail = "ซูมให้ชิดผิวหนังบริเวณรอยโรค"
+        elif lesion_found:
+            hint = "✅ พบรอยโรค — พร้อมถ่ายภาพ"
+            hint_detail = f"UNet ตรวจพบรอยโรค (conf: {confidence:.0%})"
+        elif mask_ratio < 0.005:
+            hint = "🔍 ไม่พบรอยโรค"
+            hint_detail = "วางบริเวณที่มีรอยโรคในกรอบ"
+        elif confidence < 0.60:
+            hint = "🔍 ไม่ชัดเจน"
+            hint_detail = f"กรุณาซูมให้ชิดขึ้น (conf: {confidence:.0%})"
+        elif contrast_diff < 10:
+            hint = "🔍 ไม่พบความผิดปกติ"
+            hint_detail = "ถ่ายเฉพาะบริเวณที่มีรอยโรค"
+        else:
+            hint = "🔍 ปรับตำแหน่ง"
+            hint_detail = "วางผิวหนังให้อยู่ในกรอบ"
+        
+        return {
+            "valid": lesion_found,
+            "hint": hint,
+            "hint_detail": hint_detail,
+            "lesion_found": lesion_found,
+            "unet_confidence": round(confidence, 3),
+            "mask_ratio": round(mask_ratio, 4),
+            "contrast_diff": round(contrast_diff, 1),
+            "mask_overlay": mask_overlay_b64,
+            "skin_ratio": round(skin_ratio, 3),
+            "checks": {
+                "lesion_found": lesion_found,
+                "unet_ready": True,
+                "confidence": round(confidence, 3),
+                "mask_ratio": round(mask_ratio, 4),
+                "sharp_ok": True,
+                "skin_ok": skin_ok,
+                "skin_ratio": round(skin_ratio, 3),
+            },
+        }
+    except Exception as e:
+        print(f"  ⚠️ UNet frame validation error: {e}")
+        return {
+            "valid": False,
+            "hint": "⚠️ เกิดข้อผิดพลาด",
+            "hint_detail": str(e),
+            "lesion_found": False,
+            "mask_overlay": None,
+            "checks": {"lesion_found": False, "unet_ready": True, "sharp_ok": True, "skin_ok": True},
+        }
 
 
 @app.post("/api/validate-frame")
@@ -825,102 +890,6 @@ async def api_validate_frame(file: UploadFile = File(...)):
         return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"valid": False, "hint": f"Error: {str(e)}"})
-
-
-@app.post("/api/validate-upload")
-async def api_validate_upload(file: UploadFile = File(...)):
-    """ตรวจภาพที่อัปโหลดว่าเป็นผิวหนังจริงหรือไม่ (เข้มงวด ≥80%)"""
-    try:
-        contents = await file.read()
-        if len(contents) == 0:
-            return JSONResponse({"valid": False, "reason": "ไม่มีภาพ", "skin_ratio": 0})
-        
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
-        w, h = img.size
-        
-        # ขนาดขั้นต่ำ
-        if w < 100 or h < 100:
-            return JSONResponse({"valid": False, "reason": "ภาพเล็กเกินไป กรุณาใช้ภาพที่ใหญ่กว่า 100x100 px", "skin_ratio": 0})
-        
-        # Resize เพื่อประมวลผลเร็ว
-        img_small = img.resize((128, 128))
-        arr = np.array(img_small, dtype=np.float32)
-        
-        if len(arr.shape) < 3 or arr.shape[2] < 3:
-            return JSONResponse({"valid": False, "reason": "กรุณาใช้ภาพสี (ไม่ใช่ขาวดำ)", "skin_ratio": 0})
-        
-        r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
-        
-        # Skin detection (RGB + YCbCr)
-        skin_r = (r > 50) & (r < 255)
-        skin_g = (g > 30) & (g < 230)
-        skin_b = (b > 15) & (b < 210)
-        skin_rg = (r > g) & (r > b)
-        skin_mask1 = skin_r & skin_g & skin_b & skin_rg
-        
-        y = 0.299 * r + 0.587 * g + 0.114 * b
-        cb = 128 - 0.169 * r - 0.331 * g + 0.500 * b
-        cr = 128 + 0.500 * r - 0.419 * g - 0.081 * b
-        skin_mask2 = (y > 60) & (cb > 77) & (cb < 127) & (cr > 133) & (cr < 173)
-        
-        skin_mask = skin_mask1 | skin_mask2
-        skin_ratio = float(np.mean(skin_mask))
-        skin_pct = round(skin_ratio * 100)
-        
-        # Sharpness - Laplacian
-        gray = np.mean(arr, axis=2)
-        from scipy.ndimage import laplace
-        lap = laplace(gray)
-        sharpness = float(np.var(lap))
-        
-        # Brightness
-        mean_brightness = float(np.mean(gray))
-        std_val = float(np.std(gray))
-        
-        # ─── ตัดสิน (ต้อง ≥80% skin) ───
-        if skin_pct < 80:
-            return JSONResponse({
-                "valid": False,
-                "reason": f"ภาพนี้มีสีผิวหนังเพียง {skin_pct}% (ต้อง ≥80%) กรุณาใช้ภาพถ่ายผิวหนังโดยตรง",
-                "skin_ratio": skin_pct
-            })
-        
-        if sharpness < 30:
-            return JSONResponse({
-                "valid": False,
-                "reason": "ภาพไม่ชัดเพียงพอ กรุณาถ่ายภาพให้ชัดและนิ่ง",
-                "skin_ratio": skin_pct
-            })
-        
-        if mean_brightness < 30:
-            return JSONResponse({
-                "valid": False,
-                "reason": "ภาพมืดเกินไป กรุณาถ่ายในที่มีแสงเพียงพอ",
-                "skin_ratio": skin_pct
-            })
-        
-        if mean_brightness > 245:
-            return JSONResponse({
-                "valid": False,
-                "reason": "ภาพสว่างเกินไป กรุณาลดแสง",
-                "skin_ratio": skin_pct
-            })
-        
-        if std_val < 12:
-            return JSONResponse({
-                "valid": False,
-                "reason": "ภาพดูเหมือนสีเดียว กรุณาใช้ภาพถ่ายจริง",
-                "skin_ratio": skin_pct
-            })
-        
-        return JSONResponse({
-            "valid": True,
-            "skin_ratio": skin_pct,
-            "sharpness": round(sharpness, 1),
-            "reason": f"ผ่าน! ผิวหนัง {skin_pct}%"
-        })
-    except Exception as e:
-        return JSONResponse({"valid": False, "reason": f"เกิดข้อผิดพลาด: {str(e)}", "skin_ratio": 0})
 
 
 @app.get("/", response_class=HTMLResponse)
