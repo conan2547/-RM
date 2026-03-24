@@ -894,7 +894,13 @@ async def api_validate_frame(file: UploadFile = File(...)):
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    try:
+        return templates.TemplateResponse("index.html", {"request": request})
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"  ❌ HOME ROUTE ERROR: {error_detail}")
+        return HTMLResponse(f"<pre>Error: {error_detail}</pre>", status_code=500)
 
 @app.post("/api/predict")
 async def api_predict(file: UploadFile = File(...)):
