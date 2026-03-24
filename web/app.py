@@ -895,7 +895,7 @@ async def api_validate_frame(file: UploadFile = File(...)):
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     try:
-        return templates.TemplateResponse("index.html", {"request": request})
+        return templates.TemplateResponse(name="index.html", request=request)
     except Exception as e:
         import traceback
         error_detail = traceback.format_exc()
