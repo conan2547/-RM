@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user (HF Spaces requirement) — ต้องสร้างก่อน
+RUN useradd -m -u 1000 user
+
 # Copy requirements and install Python dependencies
 COPY web/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -14,8 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy web application
 COPY web/ ./
 
-# Create non-root user (HF Spaces requirement)
-RUN useradd -m -u 1000 user
+# สร้าง cache directories ให้ user มีสิทธิ์เขียน
+RUN mkdir -p /home/user/.cache/huggingface && \
+    chown -R user:user /home/user/.cache && \
+    chown -R user:user /app
+
 USER user
 
 # Set environment variables
