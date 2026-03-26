@@ -147,22 +147,23 @@ CLASS_INFO = {
 }
 
 
-# ─── Load Models ────────────────────────────────────────────
+# ─── Lazy Loading Models ────────────────────────────────────
+# โหลดโมเดลเฉพาะตอนใช้งานจริง เพื่อประหยัด RAM (HF cpu-basic = 2GB)
 print("=" * 65)
-print("  🧬 Skin Cancer Scanner v10 — Multi-Model")
-print(f"  📊 5 Display Classes | 4 Models (ViT, ConvNeXt V2, EfficientNet-B1, DINOv2)")
+print("  Skin Cancer Scanner v10 — Multi-Model (Lazy Loading)")
+print(f"  5 Display Classes | 4 Models (ViT, ConvNeXt V2, EfficientNet-B1, DINOv2)")
 print("=" * 65)
 
 # Device
 if torch.backends.mps.is_available():
     device = torch.device("mps")
-    print("  🖥️  Device: Apple MPS (GPU)")
+    print("  Device: Apple MPS (GPU)")
 elif torch.cuda.is_available():
     device = torch.device("cuda")
-    print("  🖥️  Device: CUDA GPU")
+    print("  Device: CUDA GPU")
 else:
     device = torch.device("cpu")
-    print("  🖥️  Device: CPU")
+    print("  Device: CPU")
 
 # ─── Standard image transform for timm models (224x224) ───
 timm_transform = transforms.Compose([
@@ -171,135 +172,86 @@ timm_transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-# ─── [Model 1] ViT from HuggingFace ───
-print(f"\n  📦 [1/4] Loading ViT: {MODEL_HF_NAME}")
-vit_model = ViTForImageClassification.from_pretrained(MODEL_HF_NAME)
-vit_processor = AutoImageProcessor.from_pretrained("google/vit-base-patch16-224")
-vit_model.eval()
-vit_model = vit_model.to(device)
-print(f"       ✅ ViT loaded from HuggingFace!")
+# ─── Lazy model cache ───
+_model_cache = {}
 
-# ─── [Model 2] ConvNeXt V2 Tiny (from HuggingFace Hub) ───
 CONVNEXT_HF_NAME = "conan17970/convnextv2-skin-cancer-isic2019"
-print(f"\n  📦 [2/4] Loading ConvNeXt V2 Tiny from HF Hub...")
-convnext_model = None
-try:
-    from huggingface_hub import hf_hub_download
-    convnext_weights_path = hf_hub_download(
-        repo_id=CONVNEXT_HF_NAME,
-        filename="best_weights.pth",
-        cache_dir=None
-    )
-    convnext_model = timm.create_model(
-        "convnextv2_tiny.fcmae_ft_in22k_in1k",
-        pretrained=False,
-        num_classes=NUM_MODEL_CLASSES
-    )
-    state_dict = torch.load(convnext_weights_path, map_location="cpu", weights_only=True)
-    convnext_model.load_state_dict(state_dict)
-    convnext_model.eval()
-    convnext_model = convnext_model.to(device)
-    print(f"       ✅ ConvNeXt V2 Tiny loaded! (F1: 0.747, Acc: 73.2%)")
-except Exception as e:
-    print(f"       ⚠️ ConvNeXt V2 load error: {e}")
-    convnext_model = None
-
-# ─── [Model 3] EfficientNet-B1 (from HuggingFace Hub) ───
 EFFICIENTNET_HF_NAME = "conan17970/efficientnet-b1-skin-cancer-isic2019"
-print(f"\n  📦 [3/4] Loading EfficientNet-B1 from HF Hub...")
-efficientnet_model = None
-try:
-    efficientnet_weights_path = hf_hub_download(
-        repo_id=EFFICIENTNET_HF_NAME,
-        filename="best_weights.pth",
-        cache_dir=None
-    )
-    efficientnet_model = timm.create_model(
-        "efficientnet_b1",
-        pretrained=False,
-        num_classes=NUM_MODEL_CLASSES
-    )
-    state_dict = torch.load(efficientnet_weights_path, map_location="cpu", weights_only=True)
-    efficientnet_model.load_state_dict(state_dict)
-    efficientnet_model.eval()
-    efficientnet_model = efficientnet_model.to(device)
-    print(f"       ✅ EfficientNet-B1 loaded! (F1: 0.688, Acc: 68.2%)")
-except Exception as e:
-    print(f"       ⚠️ EfficientNet-B1 load error: {e}")
-    efficientnet_model = None
-
-# ─── [Model 4] DINOv2 from HuggingFace (31-class → 6-class mapping) ───
 DINOV2_HF_NAME = "Jayanth2002/dinov2-base-finetuned-SkinDisease"
-print(f"\n  📦 [4/4] Loading DINOv2: {DINOV2_HF_NAME}")
-dinov2_model = None
-dinov2_processor = None
+
+def _get_model(model_key: str):
+    """Lazy load a model only when needed. Returns (model, processor_or_none)."""
+    global _model_cache
+    if model_key in _model_cache:
+        return _model_cache[model_key]
+
+    print(f"  [Lazy] Loading model: {model_key}...")
+    result = (None, None)
+
+    try:
+        if model_key == "vit":
+            m = ViTForImageClassification.from_pretrained(MODEL_HF_NAME)
+            p = AutoImageProcessor.from_pretrained("google/vit-base-patch16-224")
+            m.eval(); m = m.to(device)
+            result = (m, p)
+            print(f"  [Lazy] ViT loaded!")
+
+        elif model_key == "convnext":
+            from huggingface_hub import hf_hub_download
+            w = hf_hub_download(repo_id=CONVNEXT_HF_NAME, filename="best_weights.pth")
+            m = timm.create_model("convnextv2_tiny.fcmae_ft_in22k_in1k", pretrained=False, num_classes=NUM_MODEL_CLASSES)
+            m.load_state_dict(torch.load(w, map_location="cpu", weights_only=True))
+            m.eval(); m = m.to(device)
+            result = (m, None)
+            print(f"  [Lazy] ConvNeXt V2 loaded!")
+
+        elif model_key == "efficientnet":
+            from huggingface_hub import hf_hub_download
+            w = hf_hub_download(repo_id=EFFICIENTNET_HF_NAME, filename="best_weights.pth")
+            m = timm.create_model("efficientnet_b1", pretrained=False, num_classes=NUM_MODEL_CLASSES)
+            m.load_state_dict(torch.load(w, map_location="cpu", weights_only=True))
+            m.eval(); m = m.to(device)
+            result = (m, None)
+            print(f"  [Lazy] EfficientNet-B1 loaded!")
+
+        elif model_key == "dinov2":
+            m = AutoModelForImageClassification.from_pretrained(DINOV2_HF_NAME)
+            p = AutoImageProcessor.from_pretrained(DINOV2_HF_NAME)
+            m.eval(); m = m.to(device)
+            result = (m, p)
+            print(f"  [Lazy] DINOv2 loaded!")
+
+    except Exception as e:
+        print(f"  [Lazy] {model_key} load error: {e}")
+        result = (None, None)
+
+    _model_cache[model_key] = result
+    return result
 
 # DINOv2 31 classes → our 6 classes mapping
-# Our classes: ACK=0, BCC=1, MEL=2, NEV=3, SCC=4, SEK=5
 DINOV2_31_CLASSES = [
-    'Basal Cell Carcinoma',            # 0 → BCC
-    'Darier_s Disease',                # 1 → (ไม่เกี่ยว)
-    'Epidermolysis Bullosa Pruriginosa',# 2 → (ไม่เกี่ยว)
-    'Hailey-Hailey Disease',           # 3 → (ไม่เกี่ยว)
-    'Herpes Simplex',                  # 4 → (ไม่เกี่ยว)
-    'Impetigo',                        # 5 → (ไม่เกี่ยว)
-    'Larva Migrans',                   # 6 → (ไม่เกี่ยว)
-    'Leprosy Borderline',              # 7 → (ไม่เกี่ยว)
-    'Leprosy Lepromatous',             # 8 → (ไม่เกี่ยว)
-    'Leprosy Tuberculoid',             # 9 → (ไม่เกี่ยว)
-    'Lichen Planus',                   # 10 → (ไม่เกี่ยว)
-    'Lupus Erythematosus Chronicus Discoides', # 11 → (ไม่เกี่ยว)
-    'Melanoma',                        # 12 → MEL
-    'Molluscum Contagiosum',           # 13 → (ไม่เกี่ยว)
-    'Mycosis Fungoides',               # 14 → (ไม่เกี่ยว)
-    'Neurofibromatosis',               # 15 → (ไม่เกี่ยว)
-    'Papilomatosis Confluentes And Reticulate', # 16 → (ไม่เกี่ยว)
-    'Pediculosis Capitis',             # 17 → (ไม่เกี่ยว)
-    'Pityriasis Rosea',                # 18 → (ไม่เกี่ยว)
-    'Porokeratosis Actinic',           # 19 → ACK
-    'Psoriasis',                       # 20 → (ไม่เกี่ยว)
-    'Tinea Corporis',                  # 21 → (ไม่เกี่ยว)
-    'Tinea Nigra',                     # 22 → (ไม่เกี่ยว)
-    'Tungiasis',                       # 23 → (ไม่เกี่ยว)
-    'actinic keratosis',               # 24 → ACK
-    'dermatofibroma',                  # 25 → (ไม่เกี่ยว)
-    'nevus',                           # 26 → NEV
-    'pigmented benign keratosis',      # 27 → SEK
-    'seborrheic keratosis',            # 28 → SEK
-    'squamous cell carcinoma',         # 29 → SCC
-    'vascular lesion',                 # 30 → (ไม่เกี่ยว)
+    'Basal Cell Carcinoma', 'Darier_s Disease', 'Epidermolysis Bullosa Pruriginosa',
+    'Hailey-Hailey Disease', 'Herpes Simplex', 'Impetigo', 'Larva Migrans',
+    'Leprosy Borderline', 'Leprosy Lepromatous', 'Leprosy Tuberculoid',
+    'Lichen Planus', 'Lupus Erythematosus Chronicus Discoides', 'Melanoma',
+    'Molluscum Contagiosum', 'Mycosis Fungoides', 'Neurofibromatosis',
+    'Papilomatosis Confluentes And Reticulate', 'Pediculosis Capitis',
+    'Pityriasis Rosea', 'Porokeratosis Actinic', 'Psoriasis', 'Tinea Corporis',
+    'Tinea Nigra', 'Tungiasis', 'actinic keratosis', 'dermatofibroma',
+    'nevus', 'pigmented benign keratosis', 'seborrheic keratosis',
+    'squamous cell carcinoma', 'vascular lesion',
 ]
 
-# Map: DINOv2 31-class index → our 6-class index (ACK=0, BCC=1, MEL=2, NEV=3, SCC=4, SEK=5)
 DINOV2_TO_OUR_MAP = {
-    0: 1,    # Basal Cell Carcinoma → BCC
-    12: 2,   # Melanoma → MEL
-    19: 0,   # Porokeratosis Actinic → ACK
-    24: 0,   # actinic keratosis → ACK
-    26: 3,   # nevus → NEV
-    27: 5,   # pigmented benign keratosis → SEK
-    28: 5,   # seborrheic keratosis → SEK
-    29: 4,   # squamous cell carcinoma → SCC
+    0: 1, 12: 2, 19: 0, 24: 0, 26: 3, 27: 5, 28: 5, 29: 4,
 }
 
-try:
-    dinov2_model = AutoModelForImageClassification.from_pretrained(DINOV2_HF_NAME)
-    dinov2_processor = AutoImageProcessor.from_pretrained(DINOV2_HF_NAME)
-    dinov2_model.eval()
-    dinov2_model = dinov2_model.to(device)
-    print(f"       ✅ DINOv2 loaded! (31 classes → 6, Acc: 95.6%)")
-    print(f"       📋 Mapping: {len(DINOV2_TO_OUR_MAP)} of 31 classes → ACK/BCC/MEL/NEV/SCC/SEK")
-except Exception as e:
-    print(f"       ⚠️ DINOv2 load error: {e}")
-    dinov2_model = None
-    dinov2_processor = None
-
-# ─── Model Registry ───
+# ─── Model Registry (all active=True, loaded lazily) ───
 MODEL_REGISTRY = {
     "vit": {
         "name": "ViT (Vision Transformer)",
         "name_short": "ViT",
-        "description": "Vision Transformer fine-tuned สำหรับ skin cancer",
+        "description": "Vision Transformer fine-tuned for skin cancer",
         "source": MODEL_HF_NAME,
         "accuracy": "HuggingFace Pre-trained",
         "active": True,
@@ -308,19 +260,19 @@ MODEL_REGISTRY = {
     "convnext": {
         "name": "ConvNeXt V2 Tiny",
         "name_short": "ConvNeXt V2",
-        "description": "ConvNeXt V2 Tiny เทรนจาก ISIC 2019",
-        "source": "Local (ConvexNet2/best_weights.pth)",
+        "description": "ConvNeXt V2 Tiny trained on ISIC 2019",
+        "source": CONVNEXT_HF_NAME,
         "accuracy": "F1: 0.747 | Acc: 73.2%",
-        "active": convnext_model is not None,
+        "active": True,
         "icon": "🧠",
     },
     "efficientnet": {
         "name": "EfficientNet-B1",
         "name_short": "EfficientNet",
-        "description": "EfficientNet-B1 เทรนจาก ISIC 2019",
-        "source": "Local (efficientnet_b1/best_weights.pth)",
+        "description": "EfficientNet-B1 trained on ISIC 2019",
+        "source": EFFICIENTNET_HF_NAME,
         "accuracy": "F1: 0.688 | Acc: 68.2%",
-        "active": efficientnet_model is not None,
+        "active": True,
         "icon": "⚡",
     },
     "dinov2": {
@@ -329,18 +281,16 @@ MODEL_REGISTRY = {
         "description": "DINOv2 fine-tuned SkinDisease 31 classes → 6 classes",
         "source": DINOV2_HF_NAME,
         "accuracy": "Acc: 95.6% (31-class)",
-        "active": dinov2_model is not None,
+        "active": True,
         "icon": "🦕",
     },
 }
 
-active_count = sum(1 for m in MODEL_REGISTRY.values() if m["active"])
 print(f"\n{'=' * 65}")
-print(f"  ✅ {active_count} Models Ready!")
+print(f"  4 Models registered (lazy loading — loaded on first use)")
 for key, info in MODEL_REGISTRY.items():
-    status = "✅" if info["active"] else "❌"
-    print(f"     {status} {info['name']} — {info['accuracy']}")
-print(f"  📋 Output: {NUM_MODEL_CLASSES} classes → {NUM_DISPLAY_CLASSES} display groups")
+    print(f"     {info['name']}")
+print(f"  Output: {NUM_MODEL_CLASSES} classes -> {NUM_DISPLAY_CLASSES} display groups")
 print(f"{'=' * 65}")
 
 
@@ -348,6 +298,9 @@ print(f"{'=' * 65}")
 
 def _predict_vit(img: Image.Image) -> np.ndarray:
     """Run ViT model, return raw logits (6 classes)"""
+    vit_model, vit_processor = _get_model("vit")
+    if vit_model is None:
+        return np.zeros(NUM_MODEL_CLASSES)
     encoding = vit_processor(img, return_tensors="pt")
     encoding = {k: v.to(device) for k, v in encoding.items()}
     with torch.no_grad():
@@ -356,8 +309,11 @@ def _predict_vit(img: Image.Image) -> np.ndarray:
     return logits
 
 
-def _predict_timm(img: Image.Image, model) -> np.ndarray:
+def _predict_timm(img: Image.Image, model_key: str) -> np.ndarray:
     """Run a timm model (ConvNeXt V2 or EfficientNet-B1), return raw logits (6 classes)"""
+    model, _ = _get_model(model_key)
+    if model is None:
+        return np.zeros(NUM_MODEL_CLASSES)
     input_tensor = timm_transform(img).unsqueeze(0).to(device)
     with torch.no_grad():
         logits = model(input_tensor).cpu().numpy()[0]
@@ -366,6 +322,9 @@ def _predict_timm(img: Image.Image, model) -> np.ndarray:
 
 def _predict_dinov2(img: Image.Image) -> np.ndarray:
     """Run DINOv2 (31-class) and map to our 6 classes by summing probabilities."""
+    dinov2_model, dinov2_processor = _get_model("dinov2")
+    if dinov2_model is None:
+        return np.zeros(NUM_MODEL_CLASSES)
     encoding = dinov2_processor(img, return_tensors="pt")
     encoding = {k: v.to(device) for k, v in encoding.items()}
     with torch.no_grad():
@@ -397,14 +356,14 @@ def predict(image_bytes: bytes, model_name: str = "vit"):
 
     # 2. Run selected model
     try:
-        if model_name == "dinov2" and dinov2_model is not None:
+        if model_name == "dinov2":
             logits = _predict_dinov2(img)
             used_model_name = "DINOv2"
-        elif model_name == "convnext" and convnext_model is not None:
-            logits = _predict_timm(img, convnext_model)
+        elif model_name == "convnext":
+            logits = _predict_timm(img, "convnext")
             used_model_name = "ConvNeXt V2"
-        elif model_name == "efficientnet" and efficientnet_model is not None:
-            logits = _predict_timm(img, efficientnet_model)
+        elif model_name == "efficientnet":
+            logits = _predict_timm(img, "efficientnet")
             used_model_name = "EfficientNet-B1"
         else:
             logits = _predict_vit(img)
