@@ -172,18 +172,33 @@ timm_transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-# ─── Lazy model cache ───
-_model_cache = {}
+# ─── Lazy model cache (keeps only 1 model in RAM at a time) ───
+_model_cache = {}  # key -> (model, processor)
+_current_model_key = None  # track which model is loaded
 
 CONVNEXT_HF_NAME = "conan17970/convnextv2-skin-cancer-isic2019"
 EFFICIENTNET_HF_NAME = "conan17970/efficientnet-b1-skin-cancer-isic2019"
 DINOV2_HF_NAME = "Jayanth2002/dinov2-base-finetuned-SkinDisease"
 
 def _get_model(model_key: str):
-    """Lazy load a model only when needed. Returns (model, processor_or_none)."""
-    global _model_cache
+    """Lazy load a model. Only 1 model is in RAM at a time to prevent OOM."""
+    global _model_cache, _current_model_key
+    
     if model_key in _model_cache:
         return _model_cache[model_key]
+
+    # Unload previous model to free RAM
+    if _current_model_key and _current_model_key != model_key and _current_model_key in _model_cache:
+        old_model, old_proc = _model_cache[_current_model_key]
+        if old_model is not None:
+            del old_model
+            if old_proc is not None:
+                del old_proc
+            import gc; gc.collect()
+            if hasattr(torch, 'mps') and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            print(f"  [Lazy] Unloaded {_current_model_key} to free RAM")
+        del _model_cache[_current_model_key]
 
     print(f"  [Lazy] Loading model: {model_key}...")
     result = (None, None)
@@ -226,6 +241,7 @@ def _get_model(model_key: str):
         result = (None, None)
 
     _model_cache[model_key] = result
+    _current_model_key = model_key
     return result
 
 # DINOv2 31 classes → our 6 classes mapping
