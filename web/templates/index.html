@@ -110,6 +110,49 @@
         .loading-steps .step.active { opacity: 1; color: #006780; font-weight: 600; }
         .loading-steps .step.done { opacity: 1; color: #059669; }
 
+        /* ─── Model Selector Dropdown ─── */
+        .model-dropdown-wrap {
+            position: relative; width: 100%; max-width: 420px; margin: 0 auto;
+        }
+        .model-dropdown-display {
+            display: flex; align-items: center; gap: 12px;
+            padding: 14px 18px;
+            background: #f2f4f6;
+            border: 2px solid #dde0e3;
+            border-radius: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+        .model-dropdown-display:hover { border-color: #007f9d; background: #eef0f2; }
+        .model-dropdown-display.open { border-color: #007f9d; box-shadow: 0 0 0 3px rgba(0,127,157,0.12); }
+        .model-dropdown-display .dd-icon { font-size: 22px; line-height: 1; }
+        .model-dropdown-display .dd-text { flex: 1; text-align: left; }
+        .model-dropdown-display .dd-name { font-size: 14px; font-weight: 700; color: #191c1e; }
+        .model-dropdown-display .dd-acc { font-size: 11px; color: #6e797e; font-weight: 600; margin-top: 1px; }
+        .model-dropdown-display .dd-arrow { color: #6e797e; transition: transform 0.2s; font-size: 20px; }
+        .model-dropdown-display.open .dd-arrow { transform: rotate(180deg); }
+        .model-dropdown-menu {
+            display: none;
+            position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+            background: #fff; border: 1.5px solid #dde0e3; border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.10);
+            z-index: 100; overflow: hidden;
+        }
+        .model-dropdown-menu.open { display: block; }
+        .model-dropdown-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 13px 18px;
+            cursor: pointer; transition: background 0.15s;
+        }
+        .model-dropdown-item:hover { background: #f2f4f6; }
+        .model-dropdown-item.selected { background: rgba(0,127,157,0.07); }
+        .model-dropdown-item .di-icon { font-size: 20px; }
+        .model-dropdown-item .di-text { flex: 1; }
+        .model-dropdown-item .di-name { font-size: 13px; font-weight: 700; color: #191c1e; }
+        .model-dropdown-item .di-acc { font-size: 11px; color: #6e797e; font-weight: 500; }
+        .model-dropdown-item .di-check { color: #007f9d; font-size: 18px; }
+
         /* ─── Camera Scanner ─── */
         .camera-scanner { display: none; position: fixed; inset: 0; z-index: 10000; background: #000; }
         .camera-scanner.active { display: block; }
@@ -148,6 +191,10 @@
 
         /* ─── Responsive ─── */
         @media (max-width: 768px) { .scan-frame { width: 75vmin; height: 75vmin; } }
+        @media (max-width: 640px) {
+            .model-selector { flex-direction: column; align-items: stretch; }
+            .model-card { min-width: unset; }
+        }
     </style>
 </head>
 <body class="bg-surface font-body text-on-surface selection:bg-primary-fixed selection:text-on-primary-fixed">
@@ -155,7 +202,7 @@
 <!-- Navigation -->
 <nav class="fixed top-0 w-full z-50 bg-surface/70 backdrop-blur-xl shadow-sm shadow-cyan-900/5 h-16 flex justify-between items-center px-8 font-manrope antialiased tracking-tight">
     <div class="flex items-center gap-2">
-        <img src="/static/images/logo.png" alt="Logo" class="w-8 h-8 rounded-lg">
+        <img src="/static/images/logo.png?v=2" alt="Logo" class="w-8 h-8 rounded-lg">
         <span class="text-lg font-bold tracking-tight text-cyan-900">AI for Skin Cancer Detection</span>
     </div>
     <div class="hidden md:flex items-center gap-8 absolute left-1/2 -translate-x-1/2">
@@ -220,8 +267,27 @@
         </button>
     </div>
 
-    <!-- Primary Action -->
+    <!-- Model Selector + Primary Action -->
     <div class="flex flex-col items-center justify-center mb-24" id="analyzeSection" style="display:none;">
+        <!-- Model Selector -->
+        <div class="w-full max-w-2xl mb-8">
+            <div class="text-center mb-4">
+                <span class="text-primary font-bold tracking-widest text-xs uppercase">SELECT AI MODEL</span>
+                <h3 class="text-lg font-bold text-on-surface mt-1">เลือกโมเดล AI สำหรับวิเคราะห์</h3>
+            </div>
+            <div class="model-dropdown-wrap" id="modelDropdownWrap">
+                <div class="model-dropdown-display" id="modelDropdownDisplay" onclick="toggleDropdown()">
+                    <div class="dd-text">
+                        <div class="dd-name" id="ddName">กำลังโหลด...</div>
+                    </div>
+                    <span class="material-symbols-outlined dd-arrow" id="ddArrow">expand_more</span>
+                </div>
+                <div class="model-dropdown-menu" id="modelDropdownMenu">
+                    <!-- Options populated by JS -->
+                </div>
+            </div>
+        </div>
+
         <button id="analyzeBtn" onclick="analyze()" class="primary-gradient group relative w-full max-w-md py-6 px-12 rounded-xl text-white font-bold text-xl shadow-xl shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all overflow-hidden">
             <div class="relative z-10 flex items-center justify-center gap-3">
                 <span class="material-symbols-outlined" style="font-variation-settings: 'wght' 600;">search</span>
@@ -230,7 +296,7 @@
         </button>
         <p class="mt-6 text-sm font-semibold text-on-surface-variant/60 flex items-center gap-2">
             <span class="material-symbols-outlined text-sm">verified_user</span>
-            AI Auto-Segmentation + Ensemble Classification
+            AI Auto-Segmentation + Multi-Model Classification
         </p>
     </div>
 
@@ -259,7 +325,7 @@
         <header class="mb-20 relative left-1/2 right-1/2 w-screen" style="margin-left: -50vw; margin-right: -50vw;">
             <div class="relative overflow-hidden min-h-[360px] lg:min-h-[400px] flex items-end lg:items-center">
                 <!-- Background Image -->
-                <img src="/static/images/hero_medical.jpg" alt="Doctor scanning skin" class="absolute inset-0 w-full h-full object-cover">
+                <img src="/static/images/hero_medical.jpg?v=2" alt="Doctor scanning skin" class="absolute inset-0 w-full h-full object-cover">
                 <!-- Gradient Overlay -->
                 <div class="absolute inset-0 bg-gradient-to-r from-[#002a36]/90 via-[#00394d]/75 to-transparent"></div>
                 <div class="absolute inset-0 bg-gradient-to-t from-[#002a36]/60 via-transparent to-transparent lg:bg-none"></div>
@@ -282,8 +348,8 @@
                             <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">Conditions</div>
                         </div>
                         <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
-                            <div class="text-2xl font-extrabold text-white">ViT</div>
-                            <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">AI Model</div>
+                            <div class="text-2xl font-extrabold text-white">4</div>
+                            <div class="text-[11px] text-white/60 font-semibold uppercase tracking-wider">AI Models</div>
                         </div>
                         <div class="bg-white/10 backdrop-blur-md px-5 py-3 rounded-xl">
                             <div class="text-2xl font-extrabold text-white">UNet</div>
@@ -482,7 +548,7 @@
                         <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
                             <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
                                 <div class="h-52 bg-gradient-to-br from-orange-100 to-orange-50 relative overflow-hidden">
-                                    <img src="/static/images/bcc.png" alt="Basal Cell Carcinoma" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <img src="/static/images/bcc.png?v=2" alt="Basal Cell Carcinoma" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
                                     <div class="absolute top-3 right-3">
                                         <span class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">High Risk</span>
                                     </div>
@@ -504,7 +570,7 @@
                         <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
                             <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
                                 <div class="h-52 bg-gradient-to-br from-amber-100 to-amber-50 relative overflow-hidden">
-                                    <img src="/static/images/scc.png" alt="Squamous Cell Carcinoma" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <img src="/static/images/scc.png?v=2" alt="Squamous Cell Carcinoma" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
                                     <div class="absolute top-3 right-3">
                                         <span class="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">High Risk</span>
                                     </div>
@@ -526,7 +592,7 @@
                         <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
                             <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
                                 <div class="h-52 bg-gradient-to-br from-emerald-100 to-emerald-50 relative overflow-hidden">
-                                    <img src="/static/images/nev.png" alt="Melanocytic Nevi" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <img src="/static/images/nev.png?v=2" alt="Melanocytic Nevi" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
                                     <div class="absolute top-3 right-3">
                                         <span class="bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Low Risk</span>
                                     </div>
@@ -548,7 +614,7 @@
                         <div class="w-full flex-shrink-0 px-2" style="width: 20%;">
                             <div class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-md max-w-3xl mx-auto">
                                 <div class="h-52 bg-gradient-to-br from-sky-100 to-sky-50 relative overflow-hidden">
-                                    <img src="/static/images/sek.png" alt="Seborrheic Keratosis" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
+                                    <img src="/static/images/sek.png?v=2" alt="Seborrheic Keratosis" class="w-full h-full object-cover" loading="lazy" onerror="this.style.display='none'">
                                     <div class="absolute top-3 right-3">
                                         <span class="bg-secondary-container text-on-secondary-container px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Low Risk</span>
                                     </div>
@@ -708,6 +774,8 @@
 <!-- ═══ Main Upload/Analyze Script ═══ -->
 <script>
     let selectedFile = null;
+    let selectedModelKey = 'vit';
+    let availableModels = [];
     const uploadArea = document.getElementById('uploadArea');
     const fileInput = document.getElementById('fileInput');
     const cameraInput = document.getElementById('cameraInput');
@@ -754,6 +822,71 @@
         document.getElementById('segPreview').style.display = 'none';
     }
 
+    // ─── Load Models from API ─── 
+    async function loadModels() {
+        try {
+            const resp = await fetch('/api/models');
+            const data = await resp.json();
+            availableModels = data.models || [];
+            selectedModelKey = data.default || 'vit';
+            renderModelSelector();
+        } catch (e) {
+            console.warn('Failed to load models:', e);
+            // Fallback: show ViT only
+            availableModels = [{ key: 'vit', name: 'ViT (Vision Transformer)', name_short: 'ViT', accuracy: 'HuggingFace Pre-trained', active: true, icon: '🔬' }];
+            renderModelSelector();
+        }
+    }
+
+    function renderModelSelector() {
+        const menu = document.getElementById('modelDropdownMenu');
+        if (!menu) return;
+        menu.innerHTML = availableModels.map(m => {
+            const isSelected = m.key === selectedModelKey;
+            return `
+            <div class="model-dropdown-item${isSelected ? ' selected' : ''}" onclick="selectModel('${m.key}')">
+                <div class="di-text">
+                    <div class="di-name">${m.name_short}</div>
+                </div>
+                ${isSelected ? '<span class="material-symbols-outlined di-check" style="font-variation-settings: \'FILL\' 1">check_circle</span>' : ''}
+            </div>`;
+        }).join('');
+        // Update display
+        const current = availableModels.find(m => m.key === selectedModelKey);
+        if (current) {
+            document.getElementById('ddName').textContent = current.name_short;
+        }
+    }
+
+    function toggleDropdown() {
+        const display = document.getElementById('modelDropdownDisplay');
+        const menu = document.getElementById('modelDropdownMenu');
+        display.classList.toggle('open');
+        menu.classList.toggle('open');
+    }
+
+    function selectModel(key) {
+        const model = availableModels.find(m => m.key === key);
+        if (!model || !model.active) return;
+        selectedModelKey = key;
+        renderModelSelector();
+        // Close dropdown
+        document.getElementById('modelDropdownDisplay').classList.remove('open');
+        document.getElementById('modelDropdownMenu').classList.remove('open');
+    }
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        const wrap = document.getElementById('modelDropdownWrap');
+        if (wrap && !wrap.contains(e.target)) {
+            document.getElementById('modelDropdownDisplay')?.classList.remove('open');
+            document.getElementById('modelDropdownMenu')?.classList.remove('open');
+        }
+    });
+
+    // Load models on page load
+    loadModels();
+
     async function analyze() {
         const fileToUse = selectedFile || window._capturedFile;
         if (!fileToUse) return;
@@ -772,6 +905,7 @@
         try {
             const formData = new FormData();
             formData.append('file', fileToUse);
+            formData.append('model_name', selectedModelKey);
             const response = await fetch('/api/predict', { method: 'POST', body: formData });
             const data = await response.json();
 
@@ -820,7 +954,7 @@
                         <!-- Examples -->
                         <div class="grid grid-cols-2 gap-3 mb-6">
                             <div class="bg-surface-container-low rounded-lg p-3">
-                                <div class="text-xs font-bold text-on-surface-variant/60 mb-2">❌ ตัวอย่างที่ไม่ถูกต้อง</div>
+                                <div class="text-xs font-bold text-on-surface-variant/60 mb-2">ตัวอย่างที่ไม่ถูกต้อง</div>
                                 <div class="flex justify-center gap-2">
                                     <span class="w-10 h-10 bg-surface-container-high rounded-lg flex items-center justify-center">
                                         <span class="material-symbols-outlined text-on-surface-variant/40 text-xl">landscape</span>
@@ -834,7 +968,7 @@
                                 </div>
                             </div>
                             <div class="bg-secondary-container/20 rounded-lg p-3">
-                                <div class="text-xs font-bold text-secondary mb-2">✅ ตัวอย่างที่ถูกต้อง</div>
+                                <div class="text-xs font-bold text-secondary mb-2">ตัวอย่างที่ถูกต้อง</div>
                                 <div class="flex justify-center gap-2">
                                     <span class="w-10 h-10 bg-secondary-container/30 rounded-lg flex items-center justify-center">
                                         <span class="material-symbols-outlined text-secondary text-xl" style="font-variation-settings: 'FILL' 1;">dermatology</span>
@@ -1083,7 +1217,18 @@
                         ความน่าจะเป็นทุกกลุ่มโรค
                     </h2>
                     <div class="space-y-6">${barsHtml}</div>
-                    <div class="mt-8 pt-4 border-t border-outline-variant/20 text-center text-xs text-on-surface-variant flex items-center justify-center gap-2 font-mono">
+                    ${data.model_used ? `
+                    <div class="mt-8 pt-4 border-t border-outline-variant/20">
+                        <div class="flex items-center justify-center gap-3 mb-3">
+                            <span class="text-xl">${data.model_used.icon || '🔬'}</span>
+                            <div class="text-left">
+                                <div class="text-xs font-bold text-primary uppercase tracking-wider">Model Used</div>
+                                <div class="text-sm font-bold text-on-surface">${data.model_used.name_short || data.model_used.name}</div>
+                                <div class="text-[11px] text-on-surface-variant">${data.model_used.accuracy}</div>
+                            </div>
+                        </div>
+                    </div>` : ''}
+                    <div class="mt-4 pt-4 border-t border-outline-variant/20 text-center text-xs text-on-surface-variant flex items-center justify-center gap-2 font-mono">
                         <span class="material-symbols-outlined text-[16px]">timer</span>
                         ใช้เวลาประมวลผล ${data.elapsed_ms} ms
                     </div>

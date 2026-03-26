@@ -1,7 +1,11 @@
 """
-Skin Cancer Scanner v8 — ViT (Vision Transformer)
-ViT fine-tuned for 6-class skin cancer classification.
-Model: bnmbanhmi/seekwell_skincancer_v2
+Skin Cancer Scanner v10 — Multi-Model (ViT + ConvNeXt V2 + EfficientNet-B1 + DINOv2)
+Supports 4 classification models with selectable model in the UI.
+Models:
+  1. ViT: bnmbanhmi/seekwell_skincancer_v2 (HuggingFace)
+  2. ConvNeXt V2 Tiny: locally trained (best_weights.pth)
+  3. EfficientNet-B1: locally trained (best_weights.pth)
+  4. DINOv2: Jayanth2002/dinov2-base-finetuned-SkinDisease (HuggingFace, 31-class → 6-class mapping)
 Classes: ACK, BCC, MEL, NEV, SCC, SEK
 """
 import os, io, time, traceback, json
@@ -9,13 +13,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from transformers import ViTForImageClassification, AutoImageProcessor
+from transformers import ViTForImageClassification, AutoModelForImageClassification, AutoImageProcessor
 from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from typing import Optional
+import timm
+from torchvision import transforms
 
 # ─── Config ────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
@@ -141,10 +147,10 @@ CLASS_INFO = {
 }
 
 
-# ─── Load ViT Model ────────────────────────────────────────
+# ─── Load Models ────────────────────────────────────────────
 print("=" * 65)
-print("  🧬 ViT Skin Cancer Scanner v8")
-print(f"  📊 5 Display Classes | seekwell_skincancer_v2 (6-class model, ACK excluded)")
+print("  🧬 Skin Cancer Scanner v10 — Multi-Model")
+print(f"  📊 5 Display Classes | 4 Models (ViT, ConvNeXt V2, EfficientNet-B1, DINOv2)")
 print("=" * 65)
 
 # Device
@@ -158,43 +164,252 @@ else:
     device = torch.device("cpu")
     print("  🖥️  Device: CPU")
 
-# Load ViT model from HuggingFace
-print(f"\n  📦 Loading ViT: {MODEL_HF_NAME}")
+# ─── Standard image transform for timm models (224x224) ───
+timm_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 
+# ─── [Model 1] ViT from HuggingFace ───
+print(f"\n  📦 [1/4] Loading ViT: {MODEL_HF_NAME}")
 vit_model = ViTForImageClassification.from_pretrained(MODEL_HF_NAME)
-# seekwell model ไม่มี preprocessor_config.json ใช้ base ViT processor แทน
 vit_processor = AutoImageProcessor.from_pretrained("google/vit-base-patch16-224")
-print(f"       ✅ Loaded from HuggingFace!")
-
 vit_model.eval()
 vit_model = vit_model.to(device)
-print(f"       📋 Classes: {MODEL_CLASSES}")
-print(f"       📐 Input size: 224x224")
+print(f"       ✅ ViT loaded from HuggingFace!")
 
-# Summary
+# ─── [Model 2] ConvNeXt V2 Tiny (from HuggingFace Hub) ───
+CONVNEXT_HF_NAME = "conan17970/convnextv2-skin-cancer-isic2019"
+print(f"\n  📦 [2/4] Loading ConvNeXt V2 Tiny from HF Hub...")
+convnext_model = None
+try:
+    from huggingface_hub import hf_hub_download
+    convnext_weights_path = hf_hub_download(
+        repo_id=CONVNEXT_HF_NAME,
+        filename="best_weights.pth",
+        cache_dir=None
+    )
+    convnext_model = timm.create_model(
+        "convnextv2_tiny.fcmae_ft_in22k_in1k",
+        pretrained=False,
+        num_classes=NUM_MODEL_CLASSES
+    )
+    state_dict = torch.load(convnext_weights_path, map_location="cpu", weights_only=True)
+    convnext_model.load_state_dict(state_dict)
+    convnext_model.eval()
+    convnext_model = convnext_model.to(device)
+    print(f"       ✅ ConvNeXt V2 Tiny loaded! (F1: 0.747, Acc: 73.2%)")
+except Exception as e:
+    print(f"       ⚠️ ConvNeXt V2 load error: {e}")
+    convnext_model = None
+
+# ─── [Model 3] EfficientNet-B1 (from HuggingFace Hub) ───
+EFFICIENTNET_HF_NAME = "conan17970/efficientnet-b1-skin-cancer-isic2019"
+print(f"\n  📦 [3/4] Loading EfficientNet-B1 from HF Hub...")
+efficientnet_model = None
+try:
+    efficientnet_weights_path = hf_hub_download(
+        repo_id=EFFICIENTNET_HF_NAME,
+        filename="best_weights.pth",
+        cache_dir=None
+    )
+    efficientnet_model = timm.create_model(
+        "efficientnet_b1",
+        pretrained=False,
+        num_classes=NUM_MODEL_CLASSES
+    )
+    state_dict = torch.load(efficientnet_weights_path, map_location="cpu", weights_only=True)
+    efficientnet_model.load_state_dict(state_dict)
+    efficientnet_model.eval()
+    efficientnet_model = efficientnet_model.to(device)
+    print(f"       ✅ EfficientNet-B1 loaded! (F1: 0.688, Acc: 68.2%)")
+except Exception as e:
+    print(f"       ⚠️ EfficientNet-B1 load error: {e}")
+    efficientnet_model = None
+
+# ─── [Model 4] DINOv2 from HuggingFace (31-class → 6-class mapping) ───
+DINOV2_HF_NAME = "Jayanth2002/dinov2-base-finetuned-SkinDisease"
+print(f"\n  📦 [4/4] Loading DINOv2: {DINOV2_HF_NAME}")
+dinov2_model = None
+dinov2_processor = None
+
+# DINOv2 31 classes → our 6 classes mapping
+# Our classes: ACK=0, BCC=1, MEL=2, NEV=3, SCC=4, SEK=5
+DINOV2_31_CLASSES = [
+    'Basal Cell Carcinoma',            # 0 → BCC
+    'Darier_s Disease',                # 1 → (ไม่เกี่ยว)
+    'Epidermolysis Bullosa Pruriginosa',# 2 → (ไม่เกี่ยว)
+    'Hailey-Hailey Disease',           # 3 → (ไม่เกี่ยว)
+    'Herpes Simplex',                  # 4 → (ไม่เกี่ยว)
+    'Impetigo',                        # 5 → (ไม่เกี่ยว)
+    'Larva Migrans',                   # 6 → (ไม่เกี่ยว)
+    'Leprosy Borderline',              # 7 → (ไม่เกี่ยว)
+    'Leprosy Lepromatous',             # 8 → (ไม่เกี่ยว)
+    'Leprosy Tuberculoid',             # 9 → (ไม่เกี่ยว)
+    'Lichen Planus',                   # 10 → (ไม่เกี่ยว)
+    'Lupus Erythematosus Chronicus Discoides', # 11 → (ไม่เกี่ยว)
+    'Melanoma',                        # 12 → MEL
+    'Molluscum Contagiosum',           # 13 → (ไม่เกี่ยว)
+    'Mycosis Fungoides',               # 14 → (ไม่เกี่ยว)
+    'Neurofibromatosis',               # 15 → (ไม่เกี่ยว)
+    'Papilomatosis Confluentes And Reticulate', # 16 → (ไม่เกี่ยว)
+    'Pediculosis Capitis',             # 17 → (ไม่เกี่ยว)
+    'Pityriasis Rosea',                # 18 → (ไม่เกี่ยว)
+    'Porokeratosis Actinic',           # 19 → ACK
+    'Psoriasis',                       # 20 → (ไม่เกี่ยว)
+    'Tinea Corporis',                  # 21 → (ไม่เกี่ยว)
+    'Tinea Nigra',                     # 22 → (ไม่เกี่ยว)
+    'Tungiasis',                       # 23 → (ไม่เกี่ยว)
+    'actinic keratosis',               # 24 → ACK
+    'dermatofibroma',                  # 25 → (ไม่เกี่ยว)
+    'nevus',                           # 26 → NEV
+    'pigmented benign keratosis',      # 27 → SEK
+    'seborrheic keratosis',            # 28 → SEK
+    'squamous cell carcinoma',         # 29 → SCC
+    'vascular lesion',                 # 30 → (ไม่เกี่ยว)
+]
+
+# Map: DINOv2 31-class index → our 6-class index (ACK=0, BCC=1, MEL=2, NEV=3, SCC=4, SEK=5)
+DINOV2_TO_OUR_MAP = {
+    0: 1,    # Basal Cell Carcinoma → BCC
+    12: 2,   # Melanoma → MEL
+    19: 0,   # Porokeratosis Actinic → ACK
+    24: 0,   # actinic keratosis → ACK
+    26: 3,   # nevus → NEV
+    27: 5,   # pigmented benign keratosis → SEK
+    28: 5,   # seborrheic keratosis → SEK
+    29: 4,   # squamous cell carcinoma → SCC
+}
+
+try:
+    dinov2_model = AutoModelForImageClassification.from_pretrained(DINOV2_HF_NAME)
+    dinov2_processor = AutoImageProcessor.from_pretrained(DINOV2_HF_NAME)
+    dinov2_model.eval()
+    dinov2_model = dinov2_model.to(device)
+    print(f"       ✅ DINOv2 loaded! (31 classes → 6, Acc: 95.6%)")
+    print(f"       📋 Mapping: {len(DINOV2_TO_OUR_MAP)} of 31 classes → ACK/BCC/MEL/NEV/SCC/SEK")
+except Exception as e:
+    print(f"       ⚠️ DINOv2 load error: {e}")
+    dinov2_model = None
+    dinov2_processor = None
+
+# ─── Model Registry ───
+MODEL_REGISTRY = {
+    "vit": {
+        "name": "ViT (Vision Transformer)",
+        "name_short": "ViT",
+        "description": "Vision Transformer fine-tuned สำหรับ skin cancer",
+        "source": MODEL_HF_NAME,
+        "accuracy": "HuggingFace Pre-trained",
+        "active": True,
+        "icon": "🔬",
+    },
+    "convnext": {
+        "name": "ConvNeXt V2 Tiny",
+        "name_short": "ConvNeXt V2",
+        "description": "ConvNeXt V2 Tiny เทรนจาก ISIC 2019",
+        "source": "Local (ConvexNet2/best_weights.pth)",
+        "accuracy": "F1: 0.747 | Acc: 73.2%",
+        "active": convnext_model is not None,
+        "icon": "🧠",
+    },
+    "efficientnet": {
+        "name": "EfficientNet-B1",
+        "name_short": "EfficientNet",
+        "description": "EfficientNet-B1 เทรนจาก ISIC 2019",
+        "source": "Local (efficientnet_b1/best_weights.pth)",
+        "accuracy": "F1: 0.688 | Acc: 68.2%",
+        "active": efficientnet_model is not None,
+        "icon": "⚡",
+    },
+    "dinov2": {
+        "name": "DINOv2 (31-class)",
+        "name_short": "DINOv2",
+        "description": "DINOv2 fine-tuned SkinDisease 31 classes → 6 classes",
+        "source": DINOV2_HF_NAME,
+        "accuracy": "Acc: 95.6% (31-class)",
+        "active": dinov2_model is not None,
+        "icon": "🦕",
+    },
+}
+
+active_count = sum(1 for m in MODEL_REGISTRY.values() if m["active"])
 print(f"\n{'=' * 65}")
-print(f"  ✅ ViT Ready! 1 model active")
-print(f"     [1] ViT — seekwell_skincancer_v2")
+print(f"  ✅ {active_count} Models Ready!")
+for key, info in MODEL_REGISTRY.items():
+    status = "✅" if info["active"] else "❌"
+    print(f"     {status} {info['name']} — {info['accuracy']}")
 print(f"  📋 Output: {NUM_MODEL_CLASSES} classes → {NUM_DISPLAY_CLASSES} display groups")
 print(f"{'=' * 65}")
 
 
-# ─── ViT Prediction ────────────────────────────────────────
-def predict(image_bytes: bytes):
+# ─── Model Prediction Functions ────────────────────────────
+
+def _predict_vit(img: Image.Image) -> np.ndarray:
+    """Run ViT model, return raw logits (6 classes)"""
+    encoding = vit_processor(img, return_tensors="pt")
+    encoding = {k: v.to(device) for k, v in encoding.items()}
+    with torch.no_grad():
+        outputs = vit_model(**encoding)
+        logits = outputs.logits.cpu().numpy()[0]
+    return logits
+
+
+def _predict_timm(img: Image.Image, model) -> np.ndarray:
+    """Run a timm model (ConvNeXt V2 or EfficientNet-B1), return raw logits (6 classes)"""
+    input_tensor = timm_transform(img).unsqueeze(0).to(device)
+    with torch.no_grad():
+        logits = model(input_tensor).cpu().numpy()[0]
+    return logits
+
+
+def _predict_dinov2(img: Image.Image) -> np.ndarray:
+    """Run DINOv2 (31-class) and map to our 6 classes by summing probabilities."""
+    encoding = dinov2_processor(img, return_tensors="pt")
+    encoding = {k: v.to(device) for k, v in encoding.items()}
+    with torch.no_grad():
+        outputs = dinov2_model(**encoding)
+        logits_31 = outputs.logits.cpu().numpy()[0]
+
+    # Softmax over 31 classes
+    e = np.exp(logits_31 - np.max(logits_31))
+    probs_31 = e / e.sum()
+
+    # Map 31 probabilities → 6 by summing matched classes
+    mapped_probs = np.zeros(NUM_MODEL_CLASSES, dtype=np.float64)
+    for src_idx, dst_idx in DINOV2_TO_OUR_MAP.items():
+        mapped_probs[dst_idx] += probs_31[src_idx]
+
+    # Convert back to pseudo-logits (log scale) for compatibility with the rest of predict()
+    # Add small epsilon to avoid log(0)
+    mapped_probs = np.clip(mapped_probs, 1e-10, None)
+    pseudo_logits = np.log(mapped_probs)
+    return pseudo_logits
+
+
+def predict(image_bytes: bytes, model_name: str = "vit"):
     start = time.time()
 
     # 1. Read image
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     original_size = img.size
 
-    # 2. Run ViT model
+    # 2. Run selected model
     try:
-        encoding = vit_processor(img, return_tensors="pt")
-        encoding = {k: v.to(device) for k, v in encoding.items()}
-
-        with torch.no_grad():
-            outputs = vit_model(**encoding)
-            logits = outputs.logits.cpu().numpy()[0]
+        if model_name == "dinov2" and dinov2_model is not None:
+            logits = _predict_dinov2(img)
+            used_model_name = "DINOv2"
+        elif model_name == "convnext" and convnext_model is not None:
+            logits = _predict_timm(img, convnext_model)
+            used_model_name = "ConvNeXt V2"
+        elif model_name == "efficientnet" and efficientnet_model is not None:
+            logits = _predict_timm(img, efficientnet_model)
+            used_model_name = "EfficientNet-B1"
+        else:
+            logits = _predict_vit(img)
+            used_model_name = "ViT"
+            model_name = "vit"  # fallback
 
         # ─── บังคับตัด ACK ออก: set logit = -inf ก่อน softmax ──────
         for idx in EXCLUDED_CLASS_INDICES:
@@ -204,9 +419,9 @@ def predict(image_bytes: bytes):
         e = np.exp(logits - np.max(logits))
         model_probs = e / e.sum()
     except Exception as ex:
-        raise Exception(f"ViT prediction failed: {ex}")
+        raise Exception(f"{used_model_name} prediction failed: {ex}")
 
-    model_results = {"ViT": {"probs": model_probs, "weight": 1.0}}
+    model_results = {used_model_name: {"probs": model_probs, "weight": 1.0}}
     
     # 3. Use model probabilities directly
     total_weight = sum(r["weight"] for r in model_results.values())
@@ -277,6 +492,9 @@ def predict(image_bytes: bytes):
             "weight": f"{result['weight']/total_weight*100:.0f}%",
         }
 
+    # Model info for response
+    model_info = MODEL_REGISTRY.get(model_name, MODEL_REGISTRY["vit"])
+
     return {
         "prediction": pred_class,
         "name_th": info["name_th"],
@@ -295,6 +513,13 @@ def predict(image_bytes: bytes):
         "is_uncertain": confidence < 0.35,
         "ensemble_models": len(model_results),
         "model_breakdown": model_breakdown,
+        "model_used": {
+            "key": model_name,
+            "name": model_info["name"],
+            "name_short": model_info["name_short"],
+            "accuracy": model_info["accuracy"],
+            "icon": model_info["icon"],
+        },
         "debug": {
             "mode": "single",
             "active_models": list(model_results.keys()),
@@ -302,6 +527,7 @@ def predict(image_bytes: bytes):
             "top_class": pred_class,
             "image_size": f"{original_size[0]}x{original_size[1]}",
             "device": str(device),
+            "model_key": model_name,
         }
     }
 
@@ -775,16 +1001,16 @@ def validate_camera_frame(img: Image.Image) -> dict:
     
     # สร้าง hint
     if is_valid:
-        hint = "✅ พร้อมถ่ายภาพ"
+        hint = "พร้อมถ่ายภาพ"
         hint_detail = "กดปุ่มเพื่อถ่ายภาพ"
     elif not checks["skin_ok"]:
-        hint = "🔍 ซูมให้ชิดผิวหนัง"
+        hint = "ซูมให้ชิดผิวหนัง"
         hint_detail = f"ต้องเห็นผิวหนัง >40% (ตอนนี้ {skin_ratio*100:.0f}%)"
     elif not checks.get("sharp_ok", True):
-        hint = "⚠️ ภาพไม่ชัด"
+        hint = "ภาพไม่ชัด"
         hint_detail = "กรุณาถ่ายให้ชัดและอยู่นิ่ง"
     else:
-        hint = "🔍 ปรับตำแหน่ง"
+        hint = "ปรับตำแหน่ง"
         hint_detail = "วางผิวหนังให้อยู่ในกรอบ"
     
     return {
@@ -912,8 +1138,25 @@ async def home(request: Request):
     except TypeError:
         return templates.TemplateResponse("index.html", {"request": request})
 
+@app.get("/api/models")
+async def api_models():
+    """List all available models and their status"""
+    models = []
+    for key, info in MODEL_REGISTRY.items():
+        models.append({
+            "key": key,
+            "name": info["name"],
+            "name_short": info["name_short"],
+            "description": info["description"],
+            "accuracy": info["accuracy"],
+            "active": info["active"],
+            "icon": info["icon"],
+        })
+    return JSONResponse({"models": models, "default": "vit"})
+
+
 @app.post("/api/predict")
-async def api_predict(file: UploadFile = File(...)):
+async def api_predict(file: UploadFile = File(...), model_name: str = Form("vit")):
     try:
         import base64
         
@@ -1031,10 +1274,10 @@ async def api_predict(file: UploadFile = File(...)):
         img.save(buf_pp, format="JPEG", quality=90)
         preprocessed_b64 = base64.b64encode(buf_pp.getvalue()).decode()
         
-        # Predict
+        # Predict with selected model
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=95)
-        result = predict(buf.getvalue())
+        result = predict(buf.getvalue(), model_name=model_name)
         
         result["seg_image"] = seg_image_b64
         result["seg_bbox"] = seg_bbox_str
@@ -1052,12 +1295,10 @@ async def api_predict(file: UploadFile = File(...)):
 async def health():
     return {
         "status": "ok",
-        "version": "7.0-vit",
-        "mode": "vit",
-        "models": {
-            "vit": {"active": True, "source": MODEL_HF_NAME},
-        },
-        "active_models": 1,
+        "version": "9.0-multi",
+        "mode": "multi-model",
+        "models": {k: {"active": v["active"], "name": v["name"]} for k, v in MODEL_REGISTRY.items()},
+        "active_models": sum(1 for m in MODEL_REGISTRY.values() if m["active"]),
         "classes": NUM_DISPLAY_CLASSES,
         "device": str(device),
     }
